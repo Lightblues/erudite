@@ -1,0 +1,9 @@
+[project]
+name = "erudite-scripts"
+version = "0.1.0"
+description = "Word database build & enrichment scripts for Erudite"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+build-worddb = "build_worddb:main"
