@@ -1,0 +1,30 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Xcode
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+xcuserdata/
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Dependencies
+Packages/
+
+# Secrets (never commit)
+.env
+*.key
+
+Sources/Erudite/Resources/Data/words.json
+Erudite/Erudite/Resources/Data/words.json
