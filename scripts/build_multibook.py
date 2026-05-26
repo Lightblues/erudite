@@ -22,14 +22,14 @@ DATA_RAW = PROJECT_ROOT / "data" / "raw"
 OUTPUT_DIR = PROJECT_ROOT / "Erudite" / "Erudite" / "Resources" / "Data"
 EXISTING_WORDS_PATH = OUTPUT_DIR / "words.json"
 
-# Book definitions: (source_file, id, name, exam, structure, words_per_unit)
+# Book definitions: (source_file, id, name, exam, structure)
 BOOK_DEFS = [
-    ("GRE3000_3_T.json", "gre-3000", "GRE 再要你命3000", "GRE", "sequential", 15),
-    ("gre-ciyileiji.json", "gre-ciyileiji", "GRE 词以类记", "GRE", "thematic", 20),
-    ("GRE_equivalent.json", "gre-equivalent", "GRE 等价词", "GRE", "sequential", 10),
-    ("TOEFL_3_T.json", "toefl-core", "TOEFL 核心", "TOEFL", "sequential", 15),
-    ("Categorized_TOEFL_Vocabulary_by_Zhanghongyan.json", "toefl-ciyileiji", "TOEFL 词以类记", "TOEFL", "thematic", 15),
-    ("SAT_3_T.json", "sat-core", "SAT 核心", "SAT", "sequential", 15),
+    ("GRE3000_3_T.json", "gre-3000", "GRE 再要你命3000", "GRE", "sequential"),
+    ("gre-ciyileiji.json", "gre-ciyileiji", "GRE 词以类记", "GRE", "thematic"),
+    ("GRE_equivalent.json", "gre-equivalent", "GRE 等价词", "GRE", "sequential"),
+    ("TOEFL_3_T.json", "toefl-core", "TOEFL 核心", "TOEFL", "sequential"),
+    ("Categorized_TOEFL_Vocabulary_by_Zhanghongyan.json", "toefl-ciyileiji", "TOEFL 词以类记", "TOEFL", "thematic"),
+    ("SAT_3_T.json", "sat-core", "SAT 核心", "SAT", "sequential"),
 ]
 
 
@@ -141,7 +141,7 @@ def main():
     new_words: dict[str, dict] = {}
     books_manifest = []
 
-    for source_file, book_id, name, exam, structure, words_per_unit in BOOK_DEFS:
+    for source_file, book_id, name, exam, structure in BOOK_DEFS:
         word_ids = process_book(source_file, book_id, existing_words, new_words)
         # Deduplicate while preserving order
         seen = set()
@@ -157,7 +157,6 @@ def main():
             "exam": exam,
             "source": "qwerty-learner",
             "structure": structure,
-            "wordsPerUnit": words_per_unit,
             "wordCount": len(unique_ids),
             "words": unique_ids,
         })
@@ -180,12 +179,12 @@ def main():
         word.pop("listIndex", None)
         word.pop("unitIndex", None)
 
-    # Rebuild words.json with merged data (indented for git-friendly diffs)
+    # Rebuild words.json with merged data (sorted alphabetically for clean git diffs)
     words_output = {
         "version": "3.0",
         "generated_at": "2026-05-26",
         "word_count": len(all_words),
-        "words": list(all_words.values()),
+        "words": sorted(all_words.values(), key=lambda w: w["id"]),
     }
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

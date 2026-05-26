@@ -172,14 +172,6 @@ private struct WordRow: View {
                     .padding(.vertical, 2)
                     .background(.secondary.opacity(0.1), in: Capsule())
             }
-
-            // List/Unit
-            if let list = word.listIndex, let unit = word.unitIndex {
-                Text("L\(list)U\(unit)")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .monospacedDigit()
-            }
         }
         .padding(.vertical, 4)
     }

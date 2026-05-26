@@ -10,7 +10,6 @@ struct WordBook: Identifiable, Codable, Hashable {
     let source: String?
     let wordCount: Int
     let structure: String         // "sequential" | "thematic" | "frequency"
-    let wordsPerUnit: Int
     let isBuiltin: Bool
     let createdAt: Date
 
@@ -22,7 +21,6 @@ struct WordBook: Identifiable, Codable, Hashable {
         source: String? = nil,
         wordCount: Int = 0,
         structure: String = "sequential",
-        wordsPerUnit: Int = 15,
         isBuiltin: Bool = true,
         createdAt: Date = Date()
     ) {
@@ -33,7 +31,6 @@ struct WordBook: Identifiable, Codable, Hashable {
         self.source = source
         self.wordCount = wordCount
         self.structure = structure
-        self.wordsPerUnit = wordsPerUnit
         self.isBuiltin = isBuiltin
         self.createdAt = createdAt
     }

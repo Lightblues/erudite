@@ -37,7 +37,6 @@ struct WordLoader {
             let exam: String
             let source: String
             let structure: String
-            let wordsPerUnit: Int
             let wordCount: Int
             let words: [String]
         }
@@ -103,7 +102,6 @@ struct WordLoader {
                 source: bookEntry.source,
                 wordCount: bookEntry.wordCount,
                 structure: bookEntry.structure,
-                wordsPerUnit: bookEntry.wordsPerUnit,
                 isBuiltin: true
             )
             try database.insertWordBook(book)

@@ -703,6 +703,7 @@ subagent 为什么跑了这么久? 可以加速吗? (开发效率很重要)
     - FSRS (Free Spaced Repetition Scheduler) 模型 [墨墨背单词](https://memodocs.maimemo.com/docs/2022_KDD) 开源的 [group](https://github.com/open-spaced-repetition); [算法说明](https://github.com/open-spaced-repetition/awesome-fsrs/wiki/The-Algorithm)
   - 词库:
     - [dict](https://github.com/kajweb/dict/) -- 爬取自有道背单词
+    - [GRE-CN](https://github.com/LER0ever/GRE-CN) 解析了一些 GRE 书籍
     - [ECDICT](https://github.com/skywind3000/ECDICT) "Free English to Chinese Dictionary Database", 词典很全
     - [Qwerty Learner](https://github.com/RealKai42/qwerty-learner) 22k [web](https://qwerty.kaiyi.cool/); 支持 vscode 插件, 也有在线版
       - 词库包括: GMAT, GRE, IELTS, SAT, TOEFL, CET-4, CET-6. e.g. [gre3000](https://github.com/RealKai42/qwerty-learner/blob/master/public/dicts/GRE3000_3_T.json) 但内容比较简单; 发音方案如何做的?
@@ -712,3 +713,6 @@ subagent 为什么跑了这么久? 可以加速吗? (开发效率很重要)
     - ⚠️  当前是 stub，还没实现完整 FSRS-5
   - keybaord shortcuts
   - 自动语音播放
+  - 多词书 (workbook)
+    - 词义数据: 
+    - 词书 (list) 数据源: #qwerty-learner

@@ -8,7 +8,6 @@
       "exam": "GRE",
       "source": "qwerty-learner",
       "structure": "sequential",
-      "wordsPerUnit": 15,
       "wordCount": 3036,
       "words": [
         "assent",
@@ -3055,7 +3054,6 @@
       "exam": "GRE",
       "source": "qwerty-learner",
       "structure": "thematic",
-      "wordsPerUnit": 20,
       "wordCount": 8384,
       "words": [
         "arroyo",
@@ -11450,7 +11448,6 @@
       "exam": "GRE",
       "source": "qwerty-learner",
       "structure": "sequential",
-      "wordsPerUnit": 10,
       "wordCount": 827,
       "words": [
         "mitigate",
@@ -12288,7 +12285,6 @@
       "exam": "TOEFL",
       "source": "qwerty-learner",
       "structure": "sequential",
-      "wordsPerUnit": 15,
       "wordCount": 4264,
       "words": [
         "cancel",
@@ -16563,7 +16559,6 @@
       "exam": "TOEFL",
       "source": "qwerty-learner",
       "structure": "thematic",
-      "wordsPerUnit": 15,
       "wordCount": 3669,
       "words": [
         "parasite",
@@ -20243,7 +20238,6 @@
       "exam": "SAT",
       "source": "qwerty-learner",
       "structure": "sequential",
-      "wordsPerUnit": 15,
       "wordCount": 4463,
       "words": [
         "misdeed",

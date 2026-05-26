@@ -63,12 +63,6 @@ struct WordDetailView: View {
 
             HStack(spacing: 8) {
                 tierBadge(word.frequency)
-
-                if let list = word.listIndex, let unit = word.unitIndex {
-                    Text("List \(list) · Unit \(unit)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
             }
         }
     }
