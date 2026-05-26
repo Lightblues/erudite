@@ -1040,9 +1040,10 @@ Build Configuration 之后, 下次按 "Run" 按钮运行的是 debug/release?
   - [ ] feat: dictionary
   - [ ] qwerty-learner
 - basic
-  - [ ] 安装到本机
+  - [x] 安装到本机 -- 直接 build release
   - [x] vocabulary?
   - [x] keybaord shortcuts
+  - [ ] github action
 - view
   - [x] stats 页面
 
@@ -1078,3 +1079,10 @@ Build Configuration 之后, 下次按 "Run" 按钮运行的是 debug/release?
     - 词义数据: 
     - 词书 (list) 数据源: #qwerty-learner
   - view: stats (dashboard)
+- typing (对标 qwerty-learner)
+  - feat: 循环读音; 切换英音/美音
+  - feat: 实时输入统计: WPM, 输入/正确数
+  - feat: 隐藏元音/辅音/全部字符
+  - feat: 章节小结
+  - feat: 键入错误回退
+  - feat: 激活/退出 typing 状态

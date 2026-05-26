@@ -14,13 +14,12 @@ struct TypingView: View {
             case .loading:
                 ProgressView("Loading chapter...")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-
+            case .idle:
+                idleContent
             case .typing:
                 typingContent
-
             case .chapterComplete:
                 chapterCompleteView
-
             case .empty:
                 ContentUnavailableView(
                     "No Words Available",
@@ -39,17 +38,14 @@ struct TypingView: View {
         .onAppear { isFocused = true }
         .onChange(of: appState.selectedTab) {
             if appState.selectedTab == .typing {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    isFocused = true
-                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { isFocused = true }
+            } else {
+                viewModel.deactivate()
             }
         }
         .onChange(of: showWordList) {
-            // Re-focus after popover closes
             if !showWordList {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    isFocused = true
-                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { isFocused = true }
             }
         }
         .task {
@@ -59,47 +55,62 @@ struct TypingView: View {
         }
     }
 
+    // MARK: - Idle Content
+
+    private var idleContent: some View {
+        VStack(spacing: 0) {
+            headerBar.padding(.horizontal).padding(.vertical, 12)
+            Divider()
+
+            Spacer()
+            VStack(spacing: 16) {
+                if let word = viewModel.currentWord {
+                    wordInfoSection(word: word)
+                }
+                Text("Press any key to start")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 24)
+                Text("Ch \(viewModel.chapterIndex + 1) · \(viewModel.words.count) words")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer()
+
+            Divider()
+            footerBar.padding(.horizontal).padding(.vertical, 8)
+        }
+    }
+
     // MARK: - Typing Content
 
     private var typingContent: some View {
         VStack(spacing: 0) {
-            // Header bar
-            headerBar
-                .padding(.horizontal)
-                .padding(.vertical, 12)
-
+            headerBar.padding(.horizontal).padding(.vertical, 12)
             Divider()
 
-            // Main typing area
             Spacer()
 
             if viewModel.showWordCard, let word = viewModel.currentWord {
-                // Full word card (like flashcard mode)
                 wordCardView(word: word)
             } else {
                 VStack(spacing: 24) {
-                    // Definition + phonetic
                     if let word = viewModel.currentWord {
                         wordInfoSection(word: word)
                     }
-
-                    // Letter slots
                     letterSlotsView
-
-                    // Prev/Next preview
                     navigationPreview
                 }
                 .frame(maxWidth: 600)
             }
 
             Spacer()
-
             Divider()
 
-            // Footer
-            footerBar
-                .padding(.horizontal)
-                .padding(.vertical, 8)
+            // Stats bar
+            statsBar.padding(.horizontal).padding(.vertical, 6)
+            Divider()
+            footerBar.padding(.horizontal).padding(.vertical, 8)
         }
     }
 
@@ -107,90 +118,101 @@ struct TypingView: View {
 
     private var headerBar: some View {
         HStack {
-            // Chapter info
             Text("Ch \(viewModel.chapterIndex + 1)/\(viewModel.totalChapters)")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
             Spacer()
 
-            // Progress
             Text(viewModel.chapterProgress)
-                .font(.subheadline)
-                .monospacedDigit()
+                .font(.subheadline).monospacedDigit()
                 .foregroundStyle(.secondary)
 
             Spacer()
 
-            // Mistakes
-            HStack(spacing: 4) {
-                Image(systemName: "xmark.circle")
-                    .foregroundStyle(viewModel.totalMistakes > 0 ? .red : .secondary)
-                Text("\(viewModel.totalMistakes)")
-                    .monospacedDigit()
-            }
-            .font(.subheadline)
-
-            Spacer()
-
-            // Mode toggles
-            HStack(spacing: 8) {
-                // Dictation toggle
-                Button {
-                    viewModel.toggleDictation()
-                } label: {
-                    Image(systemName: viewModel.displayMode == .typing ? "eye" : "eye.slash")
+            // Settings: hide mode
+            Picker("", selection: Binding(
+                get: { viewModel.hideMode },
+                set: { viewModel.hideMode = $0 }
+            )) {
+                ForEach(TypingViewModel.HideMode.allCases, id: \.self) { mode in
+                    Label(mode.label, systemImage: mode.icon).tag(mode)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("Toggle dictation mode (Tab)")
-
-                // Error mode toggle
-                Button {
-                    viewModel.errorMode = viewModel.errorMode == .retryChar ? .resetWord : .retryChar
-                } label: {
-                    Image(systemName: viewModel.errorMode == .retryChar ? "arrow.uturn.left.circle" : "arrow.counterclockwise")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help(viewModel.errorMode == .retryChar ? "Error: retry char" : "Error: reset word")
             }
+            .frame(maxWidth: 140)
 
-            Spacer()
+            // Settings: error mode
+            Picker("", selection: Binding(
+                get: { viewModel.errorMode },
+                set: { viewModel.errorMode = $0 }
+            )) {
+                ForEach(TypingViewModel.ErrorMode.allCases, id: \.self) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .frame(maxWidth: 110)
 
-            // Exit
+            // Loop pronunciation toggle
             Button {
-                appState.selectedTab = .today
+                viewModel.toggleLoopPronunciation()
             } label: {
+                Image(systemName: viewModel.loopPronunciation ? "repeat.circle.fill" : "repeat.circle")
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(viewModel.loopPronunciation ? .blue : .secondary)
+            .help("Loop pronunciation")
+
+            Spacer()
+
+            Button { appState.selectedTab = .today } label: {
                 Image(systemName: "xmark")
             }
             .buttonStyle(.borderless)
         }
     }
 
+    // MARK: - Stats Bar (live)
+
+    private var statsBar: some View {
+        HStack(spacing: 24) {
+            statItem("Time", value: formatTime(viewModel.elapsedTime))
+            statItem("WPM", value: String(format: "%.1f", viewModel.wpm))
+            statItem("Inputs", value: "\(viewModel.totalInputs)")
+            statItem("Correct", value: "\(viewModel.totalCorrect)")
+            statItem("Accuracy", value: viewModel.totalInputs > 0 ? "\(Int(viewModel.accuracy * 100))%" : "—")
+            statItem("Mistakes", value: "\(viewModel.totalMistakes)")
+        }
+        .font(.caption)
+    }
+
+    private func statItem(_ label: String, value: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value).fontWeight(.medium).monospacedDigit()
+            Text(label).foregroundStyle(.tertiary)
+        }
+    }
+
+    private func formatTime(_ seconds: TimeInterval) -> String {
+        let m = Int(seconds) / 60
+        let s = Int(seconds) % 60
+        return String(format: "%d:%02d", m, s)
+    }
+
     // MARK: - Word Info
 
     private func wordInfoSection(word: Word) -> some View {
         VStack(spacing: 8) {
-            // Definitions
             ForEach(Array(word.definitions.prefix(2).enumerated()), id: \.offset) { _, def in
                 HStack(spacing: 6) {
                     if !def.partOfSpeech.isEmpty {
                         Text(def.partOfSpeech)
-                            .font(.callout)
-                            .foregroundStyle(.blue)
-                            .fontWeight(.medium)
+                            .font(.callout).foregroundStyle(.blue).fontWeight(.medium)
                     }
-                    Text(def.chinese)
-                        .font(.title3)
+                    Text(def.chinese).font(.title3)
                 }
             }
-
-            // Phonetic
             if let phonetic = word.phonetic {
-                Text(phonetic)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                Text(phonetic).font(.callout).foregroundStyle(.secondary)
             }
         }
     }
@@ -201,51 +223,29 @@ struct TypingView: View {
         VStack(spacing: 16) {
             Text(word.spelling)
                 .font(.system(size: 36, weight: .bold, design: .serif))
-
             if let phonetic = word.phonetic {
-                Text(phonetic)
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
+                Text(phonetic).font(.title3).foregroundStyle(.secondary)
             }
-
             Divider().frame(maxWidth: 300)
-
             ForEach(Array(word.definitions.enumerated()), id: \.offset) { _, def in
                 HStack(spacing: 8) {
                     if !def.partOfSpeech.isEmpty {
-                        Text(def.partOfSpeech)
-                            .font(.callout)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.blue)
+                        Text(def.partOfSpeech).font(.callout).fontWeight(.semibold).foregroundStyle(.blue)
                     }
                     VStack(alignment: .leading, spacing: 2) {
-                        if !def.chinese.isEmpty {
-                            Text(def.chinese)
-                        }
-                        if !def.english.isEmpty {
-                            Text(def.english)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                        }
+                        if !def.chinese.isEmpty { Text(def.chinese) }
+                        if !def.english.isEmpty { Text(def.english).font(.callout).foregroundStyle(.secondary) }
                     }
                 }
             }
-
             if !word.synonymGroups.isEmpty {
                 HStack {
-                    Text("Syn:")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text("Syn:").font(.caption).foregroundStyle(.secondary)
                     Text(word.synonymGroups.flatMap { $0 }.prefix(5).joined(separator: ", "))
-                        .font(.caption)
-                        .foregroundStyle(.green)
+                        .font(.caption).foregroundStyle(.green)
                 }
             }
-
-            Text("Press Space to dismiss")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .padding(.top, 8)
+            Text("Press Space to dismiss").font(.caption2).foregroundStyle(.tertiary).padding(.top, 8)
         }
         .padding(24)
         .frame(maxWidth: 500)
@@ -255,9 +255,7 @@ struct TypingView: View {
     // MARK: - Letter Slots
 
     private var letterSlotsView: some View {
-        let spelling = viewModel.targetSpelling
-        let letters = Array(spelling)
-
+        let letters = Array(viewModel.targetSpelling)
         return HStack(spacing: 4) {
             ForEach(Array(letters.enumerated()), id: \.offset) { index, letter in
                 letterSlot(letter: letter, index: index)
@@ -272,15 +270,10 @@ struct TypingView: View {
 
         let displayChar: String = {
             switch state {
-            case .correct:
-                return String(letter)
-            case .wrong:
-                return String(letter)
+            case .correct: return String(letter)
+            case .wrong: return String(letter)
             case .untyped:
-                if viewModel.displayMode == .dictation {
-                    return "_"
-                }
-                return String(letter)
+                return viewModel.hideMode.shouldHide(letter) ? "_" : String(letter)
             }
         }()
 
@@ -288,7 +281,8 @@ struct TypingView: View {
             switch state {
             case .correct: return .green
             case .wrong: return .red
-            case .untyped: return viewModel.displayMode == .dictation ? .secondary : .primary.opacity(0.4)
+            case .untyped:
+                return viewModel.hideMode.shouldHide(letter) ? .secondary : .primary.opacity(0.4)
             }
         }()
 
@@ -296,72 +290,43 @@ struct TypingView: View {
             .font(.system(size: 32, weight: .medium, design: .monospaced))
             .foregroundStyle(color)
             .frame(width: 36, height: 48)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isCursor ? Color.accentColor.opacity(0.1) : Color.clear)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(isCursor ? Color.accentColor : Color.clear, lineWidth: 2)
-            )
+            .background(RoundedRectangle(cornerRadius: 6)
+                .fill(isCursor ? Color.accentColor.opacity(0.1) : Color.clear))
+            .overlay(RoundedRectangle(cornerRadius: 6)
+                .stroke(isCursor ? Color.accentColor : Color.clear, lineWidth: 2))
     }
 
     // MARK: - Navigation Preview
 
     private var navigationPreview: some View {
         HStack {
-            // Previous word (clickable)
             if let prev = viewModel.previousWord {
-                Button {
-                    viewModel.goBack()
-                } label: {
+                Button { viewModel.goBack() } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: "chevron.left")
-                            .font(.caption2)
-                        Text(prev.spelling)
-                            .font(.caption)
-                    }
-                    .foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
-            } else {
-                Spacer().frame(width: 80)
-            }
+                        Image(systemName: "chevron.left").font(.caption2)
+                        Text(prev.spelling).font(.caption)
+                    }.foregroundStyle(.tertiary)
+                }.buttonStyle(.plain)
+            } else { Spacer().frame(width: 80) }
 
             Spacer()
 
-            // Word list toggle
-            Button {
-                showWordList.toggle()
-            } label: {
-                Label("Word List", systemImage: "list.bullet")
-                    .font(.caption)
+            Button { showWordList.toggle() } label: {
+                Label("Word List", systemImage: "list.bullet").font(.caption)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .popover(isPresented: $showWordList) {
-                wordListPopover
-            }
+            .buttonStyle(.bordered).controlSize(.small)
+            .popover(isPresented: $showWordList) { wordListPopover }
 
             Spacer()
 
-            // Next word (clickable)
             if let next = viewModel.nextWord {
-                Button {
-                    viewModel.skipWord()
-                } label: {
+                Button { viewModel.skipWord() } label: {
                     HStack(spacing: 4) {
-                        Text(viewModel.displayMode == .dictation ? "•••" : next.spelling)
-                            .font(.caption)
-                        Image(systemName: "chevron.right")
-                            .font(.caption2)
-                    }
-                    .foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
-            } else {
-                Spacer().frame(width: 80)
-            }
+                        Text(viewModel.hideMode == .all ? "•••" : next.spelling).font(.caption)
+                        Image(systemName: "chevron.right").font(.caption2)
+                    }.foregroundStyle(.tertiary)
+                }.buttonStyle(.plain)
+            } else { Spacer().frame(width: 80) }
         }
         .padding(.horizontal, 40)
     }
@@ -375,37 +340,21 @@ struct TypingView: View {
                     Button {
                         viewModel.goToWord(at: index)
                         showWordList = false
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                            isFocused = true
-                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { isFocused = true }
                     } label: {
                         HStack {
-                            Text("\(index + 1)")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
+                            Text("\(index + 1)").font(.caption).foregroundStyle(.tertiary)
                                 .frame(width: 24, alignment: .trailing)
-
-                            Text(word.spelling)
-                                .font(.body.monospaced())
+                            Text(word.spelling).font(.body.monospaced())
                                 .fontWeight(index == viewModel.currentIndex ? .bold : .regular)
-
                             Spacer()
-
                             if let def = word.definitions.first {
-                                Text(def.chinese)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
+                                Text(def.chinese).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
-
                             if index < viewModel.wordsCompleted {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(.green)
-                                    .font(.caption)
+                                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).font(.caption)
                             } else if index == viewModel.currentIndex {
-                                Image(systemName: "pencil.circle.fill")
-                                    .foregroundStyle(.blue)
-                                    .font(.caption)
+                                Image(systemName: "pencil.circle.fill").foregroundStyle(.blue).font(.caption)
                             }
                         }
                     }
@@ -417,9 +366,7 @@ struct TypingView: View {
             .listStyle(.plain)
             .frame(width: 360, height: 400)
             .onAppear {
-                if let current = viewModel.currentWord {
-                    proxy.scrollTo(current.id, anchor: .center)
-                }
+                if let current = viewModel.currentWord { proxy.scrollTo(current.id, anchor: .center) }
             }
         }
     }
@@ -428,84 +375,112 @@ struct TypingView: View {
 
     private var footerBar: some View {
         HStack {
-            // Chapter navigation
-            Button {
-                viewModel.previousChapter()
-            } label: {
+            Button { viewModel.previousChapter() } label: {
                 Label("Prev Ch", systemImage: "chevron.left")
-            }
-            .buttonStyle(.borderless)
-            .disabled(viewModel.chapterIndex == 0)
+            }.buttonStyle(.borderless).disabled(viewModel.chapterIndex == 0)
 
             Spacer()
 
-            // Shortcuts hint
             HStack(spacing: 12) {
-                shortcutHint("Tab", "Dictation")
                 shortcutHint("⌘R", "Replay")
                 shortcutHint("Space", "Card")
                 shortcutHint("←→", "Nav")
-                shortcutHint("Esc", "Exit")
+                shortcutHint("Esc", "Pause")
             }
 
             Spacer()
 
-            Button {
-                viewModel.nextChapter()
-            } label: {
+            Button { viewModel.nextChapter() } label: {
                 Label("Next Ch", systemImage: "chevron.right")
-            }
-            .buttonStyle(.borderless)
-            .disabled(viewModel.chapterIndex >= viewModel.totalChapters - 1)
+            }.buttonStyle(.borderless).disabled(viewModel.chapterIndex >= viewModel.totalChapters - 1)
         }
     }
 
     private func shortcutHint(_ key: String, _ action: String) -> some View {
         HStack(spacing: 3) {
-            Text(key)
-                .font(.caption2.monospaced())
-                .padding(.horizontal, 4)
-                .padding(.vertical, 2)
+            Text(key).font(.caption2.monospaced())
+                .padding(.horizontal, 4).padding(.vertical, 2)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 3))
-            Text(action)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+            Text(action).font(.caption2).foregroundStyle(.tertiary)
         }
     }
 
     // MARK: - Chapter Complete
 
     private var chapterCompleteView: some View {
-        VStack(spacing: 24) {
-            Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 48))
-                .foregroundStyle(.green)
+        ScrollView {
+            VStack(spacing: 24) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 48)).foregroundStyle(.green)
 
-            Text("Chapter Complete!")
-                .font(.title)
-                .fontWeight(.bold)
+                Text("Chapter Complete!").font(.title).fontWeight(.bold)
 
-            VStack(spacing: 8) {
-                Text("\(viewModel.words.count) words typed")
-                    .font(.headline)
-                Text("\(viewModel.totalMistakes) mistakes")
-                    .font(.subheadline)
-                    .foregroundStyle(viewModel.totalMistakes == 0 ? .green : .orange)
-            }
-
-            HStack(spacing: 16) {
-                Button("Back to Today") {
-                    appState.selectedTab = .today
-                }
-                .buttonStyle(.bordered)
-
-                if viewModel.chapterIndex < viewModel.totalChapters - 1 {
-                    Button("Next Chapter") {
-                        viewModel.nextChapter()
+                // Stats summary
+                HStack(spacing: 32) {
+                    VStack {
+                        Text("\(Int(viewModel.accuracy * 100))%").font(.title2).fontWeight(.bold).foregroundStyle(.green)
+                        Text("Accuracy").font(.caption).foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.borderedProminent)
+                    VStack {
+                        Text(formatTime(viewModel.elapsedTime)).font(.title2).fontWeight(.bold)
+                        Text("Time").font(.caption).foregroundStyle(.secondary)
+                    }
+                    VStack {
+                        Text(String(format: "%.1f", viewModel.wpm)).font(.title2).fontWeight(.bold).foregroundStyle(.blue)
+                        Text("WPM").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .padding()
+                .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
+
+                // Word results (mistakes first)
+                let sorted = viewModel.wordResults.sorted { $0.mistakes > $1.mistakes }
+                if !sorted.isEmpty {
+                    GroupBox("Words (errors first)") {
+                        VStack(spacing: 4) {
+                            ForEach(Array(sorted.enumerated()), id: \.offset) { _, result in
+                                HStack {
+                                    Text(result.word.spelling)
+                                        .font(.body.monospaced())
+                                        .fontWeight(result.mistakes > 0 ? .bold : .regular)
+                                        .foregroundStyle(result.mistakes > 0 ? .red : .primary)
+                                    Spacer()
+                                    if let def = result.word.definitions.first {
+                                        Text(def.chinese).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                    }
+                                    Spacer()
+                                    if result.mistakes > 0 {
+                                        Text("\(result.mistakes) err").font(.caption).foregroundStyle(.red)
+                                    }
+                                    Text(String(format: "%.1fs", result.duration))
+                                        .font(.caption).monospacedDigit().foregroundStyle(.tertiary)
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
+                    .frame(maxWidth: 500)
+                }
+
+                // Actions
+                HStack(spacing: 16) {
+                    Button("Repeat Chapter") {
+                        viewModel.repeatChapter()
+                    }.buttonStyle(.bordered)
+
+                    Button("Dictation Mode") {
+                        viewModel.startDictationChapter()
+                    }.buttonStyle(.bordered)
+
+                    if viewModel.chapterIndex < viewModel.totalChapters - 1 {
+                        Button("Next Chapter") {
+                            viewModel.nextChapter()
+                        }.buttonStyle(.borderedProminent)
+                    }
                 }
             }
+            .padding(32)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -513,58 +488,71 @@ struct TypingView: View {
     // MARK: - Key Handling
 
     private func handleKeyPress(_ press: KeyPress) -> KeyPress.Result {
+        // Escape: deactivate or exit
+        if press.key == .escape {
+            if viewModel.phase == .typing {
+                viewModel.deactivate()
+                return .handled
+            } else {
+                appState.selectedTab = .today
+                return .handled
+            }
+        }
+
+        // In idle: any key (letter or space) activates — but does NOT input to word
+        if viewModel.phase == .idle {
+            let chars = press.characters.lowercased()
+            let isLetter = chars.count == 1 && chars.first?.isLetter == true
+            let isSpace = press.key == .space
+
+            if isLetter || isSpace {
+                viewModel.activate()
+                return .handled  // consume the key, don't pass to word
+            }
+            // Allow navigation even in idle
+            if press.key == .tab { viewModel.cycleHideMode(); return .handled }
+            if press.key == .rightArrow { viewModel.skipWord(); return .handled }
+            if press.key == .leftArrow { viewModel.goBack(); return .handled }
+            return .ignored
+        }
+
         guard viewModel.phase == .typing else { return .ignored }
 
-        // Space: toggle word card view
+        // Space: toggle word card
         if press.key == .space {
             viewModel.toggleWordCard()
             return .handled
         }
 
-        // Cmd+R: replay (avoids conflict with typing 'r')
+        // Cmd+R: replay
         if press.key == KeyEquivalent("r") && press.modifiers.contains(.command) {
             viewModel.replayPronunciation()
             return .handled
         }
 
-        // Tab: toggle dictation
+        // Tab: cycle hide mode
         if press.key == .tab {
-            viewModel.toggleDictation()
+            viewModel.cycleHideMode()
             return .handled
         }
 
-        // Arrow keys: navigate words
-        if press.key == .leftArrow {
-            viewModel.goBack()
-            return .handled
-        }
-        if press.key == .rightArrow {
-            viewModel.skipWord()
-            return .handled
-        }
+        // Arrows
+        if press.key == .leftArrow { viewModel.goBack(); return .handled }
+        if press.key == .rightArrow { viewModel.skipWord(); return .handled }
 
-        // Escape: exit
-        if press.key == .escape {
-            appState.selectedTab = .today
-            return .handled
-        }
-
-        // Return: advance if word complete
+        // Return: advance if complete
         if press.key == .return {
-            if viewModel.isWordComplete {
-                viewModel.skipWord()
-            }
+            if viewModel.isWordComplete { viewModel.skipWord() }
             return .handled
         }
 
-        // Letter input (only when card not showing)
+        // Letter input
         if !viewModel.showWordCard {
             let chars = press.characters.lowercased()
             if chars.count == 1, let char = chars.first, char.isLetter {
                 viewModel.handleKeystroke(char)
                 return .handled
             }
-            // Handle hyphen and space in words
             if press.characters == "-" || press.characters == " " {
                 if let char = press.characters.first {
                     viewModel.handleKeystroke(char)

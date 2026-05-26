@@ -11,7 +11,8 @@ final class TypingViewModel {
 
     enum Phase {
         case loading
-        case typing
+        case idle       // waiting for user to start
+        case typing     // actively typing
         case chapterComplete
         case empty
     }
@@ -22,22 +23,69 @@ final class TypingViewModel {
         case wrong
     }
 
-    enum DisplayMode {
-        case typing     // show all letters
-        case dictation  // hide untyped letters
+    enum HideMode: String, CaseIterable {
+        case none       // show all letters
+        case vowels     // hide vowels
+        case consonants // hide consonants
+        case all        // hide all (full dictation)
+
+        var label: String {
+            switch self {
+            case .none: "Show All"
+            case .vowels: "Hide Vowels"
+            case .consonants: "Hide Consonants"
+            case .all: "Hide All"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .none: "eye"
+            case .vowels: "eye.trianglebadge.exclamationmark"
+            case .consonants: "eye.slash.circle"
+            case .all: "eye.slash"
+            }
+        }
+
+        func shouldHide(_ char: Character) -> Bool {
+            let vowels: Set<Character> = ["a", "e", "i", "o", "u"]
+            switch self {
+            case .none: return false
+            case .vowels: return vowels.contains(Character(char.lowercased()))
+            case .consonants: return char.isLetter && !vowels.contains(Character(char.lowercased()))
+            case .all: return true
+            }
+        }
     }
 
-    enum ErrorMode: String {
-        case retryChar  // retry current character (default)
-        case resetWord  // reset entire word from beginning
+    enum ErrorMode: String, CaseIterable {
+        case retryChar  // retry current character
+        case resetWord  // reset entire word
+
+        var label: String {
+            switch self {
+            case .retryChar: "Retry Char"
+            case .resetWord: "Reset Word"
+            }
+        }
+    }
+
+    // MARK: - Settings (persisted)
+
+    var hideMode: HideMode {
+        didSet { UserDefaults.standard.set(hideMode.rawValue, forKey: "typing_hideMode") }
+    }
+    var errorMode: ErrorMode {
+        didSet { UserDefaults.standard.set(errorMode.rawValue, forKey: "typing_errorMode") }
+    }
+    var loopPronunciation: Bool {
+        didSet { UserDefaults.standard.set(loopPronunciation, forKey: "typing_loopPronunciation") }
     }
 
     // MARK: - Published State
 
     var phase: Phase = .loading
-    var displayMode: DisplayMode = .typing
-    var errorMode: ErrorMode = .retryChar
-    var showWordCard: Bool = false  // space to show full card
+    var showWordCard: Bool = false
 
     // Chapter state
     var words: [Word] = []
@@ -52,9 +100,16 @@ final class TypingViewModel {
     var isWordComplete: Bool = false
     var wordMistakes: Int = 0
 
-    // Session stats
+    // Session stats (character-level)
+    var totalInputs: Int = 0
+    var totalCorrect: Int = 0
     var totalMistakes: Int = 0
     var wordsCompleted: Int = 0
+    var sessionStartTime: Date?
+    var wordStartTime: Date?
+
+    // Per-word results for chapter summary
+    var wordResults: [(word: Word, mistakes: Int, duration: TimeInterval)] = []
 
     // MARK: - Computed
 
@@ -81,15 +136,44 @@ final class TypingViewModel {
         "\(wordsCompleted) / \(words.count)"
     }
 
+    var accuracy: Double {
+        totalInputs > 0 ? Double(totalCorrect) / Double(totalInputs) : 0
+    }
+
+    var elapsedTime: TimeInterval {
+        sessionStartTime.map { Date().timeIntervalSince($0) } ?? 0
+    }
+
+    var wpm: Double {
+        let minutes = elapsedTime / 60.0
+        guard minutes > 0 else { return 0 }
+        // WPM = total characters typed correctly / 5 / minutes
+        return Double(totalCorrect) / 5.0 / minutes
+    }
+
     // MARK: - Dependencies
 
     private var database: DatabaseService?
     private var bookId: String?
     private let pronunciation = PronunciationService()
+    private var loopTimer: Timer?
+
+    // Sound effects
+    private let correctSound = NSSound(named: "Tink")
+    private let wrongSound = NSSound(named: "Basso")
+    private let completeSound = NSSound(named: "Glass")
 
     // MARK: - Progress persistence key
     private var progressKey: String {
         "typing_chapter_\(bookId ?? "all")"
+    }
+
+    // MARK: - Init (load persisted settings)
+
+    init() {
+        self.hideMode = HideMode(rawValue: UserDefaults.standard.string(forKey: "typing_hideMode") ?? "") ?? .none
+        self.errorMode = ErrorMode(rawValue: UserDefaults.standard.string(forKey: "typing_errorMode") ?? "") ?? .retryChar
+        self.loopPronunciation = UserDefaults.standard.bool(forKey: "typing_loopPronunciation")
     }
 
     // MARK: - Public API
@@ -98,11 +182,29 @@ final class TypingViewModel {
         self.database = database
         self.bookId = bookId
 
-        // Restore progress
         let savedChapter = UserDefaults.standard.integer(forKey: progressKey)
         self.chapterIndex = savedChapter
 
         loadChapter()
+    }
+
+    /// Called when any key is pressed while idle → enter typing mode
+    func activate() {
+        guard phase == .idle else { return }
+        phase = .typing
+        sessionStartTime = sessionStartTime ?? Date()
+        wordStartTime = Date()
+        if let word = currentWord {
+            pronunciation.speak(word.spelling)
+            startLoopIfNeeded()
+        }
+    }
+
+    /// Called on Esc or window blur → pause to idle
+    func deactivate() {
+        guard phase == .typing else { return }
+        phase = .idle
+        stopLoop()
     }
 
     func handleKeystroke(_ char: Character) {
@@ -112,13 +214,16 @@ final class TypingViewModel {
 
         guard cursorPosition < targetChars.count else { return }
 
-        // Dismiss card view on typing
         if showWordCard { showWordCard = false }
+
+        totalInputs += 1
 
         if char == targetChars[cursorPosition] {
             // Correct
             letterStates[cursorPosition] = .correct
             cursorPosition += 1
+            totalCorrect += 1
+            correctSound?.play()
 
             if cursorPosition >= targetChars.count {
                 wordComplete()
@@ -128,13 +233,10 @@ final class TypingViewModel {
             letterStates[cursorPosition] = .wrong
             wordMistakes += 1
             totalMistakes += 1
-
-            // Play system error sound
-            NSSound.beep()
+            wrongSound?.play()
 
             switch errorMode {
             case .retryChar:
-                // Reset current char after brief delay
                 let pos = cursorPosition
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                     guard let self, pos < self.letterStates.count else { return }
@@ -143,7 +245,6 @@ final class TypingViewModel {
                     }
                 }
             case .resetWord:
-                // Reset entire word after brief delay
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
                     guard let self else { return }
                     self.letterStates = Array(repeating: .untyped, count: self.targetSpelling.count)
@@ -162,12 +263,14 @@ final class TypingViewModel {
         currentIndex -= 1
         wordsCompleted = max(0, wordsCompleted - 1)
         setupCurrentWord()
+        if phase == .typing { startLoopIfNeeded() }
     }
 
     func goToWord(at index: Int) {
         guard index >= 0, index < words.count else { return }
         currentIndex = index
         setupCurrentWord()
+        if phase == .typing { startLoopIfNeeded() }
     }
 
     func nextChapter() {
@@ -183,14 +286,19 @@ final class TypingViewModel {
         loadChapter()
     }
 
-    func goToChapter(_ chapter: Int) {
-        chapterIndex = chapter
-        saveProgress()
+    func repeatChapter() {
         loadChapter()
     }
 
-    func toggleDictation() {
-        displayMode = displayMode == .typing ? .dictation : .typing
+    func startDictationChapter() {
+        hideMode = .all
+        loadChapter()
+    }
+
+    func cycleHideMode() {
+        let modes = HideMode.allCases
+        let idx = modes.firstIndex(of: hideMode) ?? 0
+        hideMode = modes[(idx + 1) % modes.count]
     }
 
     func toggleWordCard() {
@@ -200,6 +308,15 @@ final class TypingViewModel {
     func replayPronunciation() {
         guard let word = currentWord else { return }
         pronunciation.speak(word.spelling)
+    }
+
+    func toggleLoopPronunciation() {
+        loopPronunciation.toggle()
+        if loopPronunciation && phase == .typing {
+            startLoopIfNeeded()
+        } else {
+            stopLoop()
+        }
     }
 
     // MARK: - Private
@@ -218,7 +335,6 @@ final class TypingViewModel {
             let totalWords = try db.fetchWordCount(inBook: bookId)
             totalChapters = (totalWords + chapterSize - 1) / chapterSize
 
-            // Clamp chapter index
             if chapterIndex >= totalChapters { chapterIndex = max(0, totalChapters - 1) }
 
             let offset = chapterIndex * chapterSize
@@ -230,9 +346,13 @@ final class TypingViewModel {
                 currentIndex = 0
                 wordsCompleted = 0
                 totalMistakes = 0
+                totalInputs = 0
+                totalCorrect = 0
+                sessionStartTime = nil
+                wordResults = []
                 showWordCard = false
                 setupCurrentWord()
-                phase = .typing
+                phase = .idle
                 saveProgress()
             }
         } catch {
@@ -248,21 +368,23 @@ final class TypingViewModel {
         isWordComplete = false
         wordMistakes = 0
         showWordCard = false
-
-        // Auto-play pronunciation
-        if !spelling.isEmpty {
-            pronunciation.speak(spelling)
-        }
+        wordStartTime = phase == .typing ? Date() : nil
     }
 
     private func wordComplete() {
         isWordComplete = true
         wordsCompleted += 1
+        completeSound?.play()
+        stopLoop()
 
-        // TODO: Record typing stats to DB (word, mistakes, time)
+        let duration = wordStartTime.map { Date().timeIntervalSince($0) } ?? 0
+        if let word = currentWord {
+            wordResults.append((word: word, mistakes: wordMistakes, duration: duration))
+        }
 
-        // Auto-advance after brief pause
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+        recordTypingLog(mistakes: wordMistakes, duration: duration)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.advanceToNext()
         }
     }
@@ -271,8 +393,47 @@ final class TypingViewModel {
         if currentIndex + 1 < words.count {
             currentIndex += 1
             setupCurrentWord()
+            if phase == .typing {
+                wordStartTime = Date()
+                if let word = currentWord {
+                    pronunciation.speak(word.spelling)
+                    startLoopIfNeeded()
+                }
+            }
         } else {
             phase = .chapterComplete
+        }
+    }
+
+    private func startLoopIfNeeded() {
+        stopLoop()
+        guard loopPronunciation, let word = currentWord else { return }
+        loopTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            guard let self, self.phase == .typing, !self.isWordComplete else {
+                self?.stopLoop()
+                return
+            }
+            self.pronunciation.speak(word.spelling)
+        }
+    }
+
+    private func stopLoop() {
+        loopTimer?.invalidate()
+        loopTimer = nil
+    }
+
+    private func recordTypingLog(mistakes: Int, duration: TimeInterval?) {
+        guard let db = database, let word = currentWord else { return }
+        do {
+            try db.insertTypingLog(
+                wordId: word.id,
+                bookId: bookId,
+                mistakes: mistakes,
+                duration: duration,
+                mode: hideMode == .none ? "typing" : "dictation_\(hideMode.rawValue)"
+            )
+        } catch {
+            print("Failed to record typing log: \(error)")
         }
     }
 }
