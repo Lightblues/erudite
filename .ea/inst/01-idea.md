@@ -328,7 +328,7 @@ Unable to obtain a task name port right for pid 401: (os/kern) failure (0x5)
 2. 词表: 合理的, 应该内置已有词表+支持外部导入
 下面讨论具体的 UI 交互设计
 
-## macos dev
+## macos dev workflow
 先来帮我配置 macos 原生开发所需要的工具? 我之前主要用 vscode+cli 工具, 有什么需要新安装的吗
 ```sh
 # 一、必装（Required）
@@ -349,8 +349,347 @@ Unable to obtain a task name port right for pid 401: (os/kern) failure (0x5)
 ```
 
 我安装好 Xcode 了, 先来给我普及一下, macos app 的开发流程是怎样的?
+```sh
+# 心智模型对照
+  ┌───────────────┬────────────────────────────────────────┬──────────────────────────────────┐
+  │ Web/Node 概念 │            Xcode/Swift 对应            │               区别               │
+  ├───────────────┼────────────────────────────────────────┼──────────────────────────────────┤
+  │ package.json  │ .xcodeproj / .xcworkspace              │ 二进制可编辑文件，不是 JSON      │
+  ├───────────────┼────────────────────────────────────────┼──────────────────────────────────┤
+  │ src/          │ App target 下的文件夹                  │ 物理目录和 Xcode                 │
+  │               │                                        │ 里看到的"虚拟分组"可以不一致     │
+  ├───────────────┼────────────────────────────────────────┼──────────────────────────────────┤
+  │ npm install   │ Swift Package Manager（在 Xcode 里加） │ 锁文件叫 Package.resolved        │
+  ├───────────────┼────────────────────────────────────────┼──────────────────────────────────┤
+  │ npm run dev   │ 选 Scheme → ⌘R（Run）                  │ 没有 watch 模式，但有 SwiftUI    │
+  │               │                                        │ Preview（更强）                  │
+  ├───────────────┼────────────────────────────────────────┼──────────────────────────────────┤
+  │ webpack/vite  │ xcodebuild                             │ 一般你不直接调用，Xcode 帮你跑   │
+  ├───────────────┼────────────────────────────────────────┼──────────────────────────────────┤
+  │ node_modules/ │ ~/Library/Developer/Xcode/DerivedData/ │ 编译缓存放用户目录，不进项目     │
+  ├───────────────┼────────────────────────────────────────┼──────────────────────────────────┤
+  │ dist/         │ .app bundle（其实是个文件夹）          │ 双击就能运行                     │
+  └───────────────┴────────────────────────────────────────┴──────────────────────────────────┘
+  
+  关键概念四件套（Xcode 黑话，不懂会一脸懵）：
+  
+  - Workspace：可以包含多个 Project（多模块场景）。我们暂时不需要。
+  - Project：.xcodeproj，一个产品的所有源码+配置
+  - Target：一个具体的构建产物（App、Test、Widget 各一个 target）
+  - Scheme：一组"如何构建/运行/测试"的配置（Debug 用哪个 target、传哪些参数）
+
+  → 你绝大多数时间面对的是 一个 Project，一个 App Target，一两个 Scheme。
+
+# 项目结构（新建 SwiftUI macOS App 之后）
+  Radix/                          ← 仓库根目录
+  ├── Radix.xcodeproj/            ← Xcode 项目配置（二进制 plist）
+  ├── Radix/                      ← 源码目录
+  │   ├── RadixApp.swift          ← 入口（@main，相当于 main.ts）
+  │   ├── ContentView.swift       ← 第一个 View
+  │   ├── Assets.xcassets/        ← 图标 / 颜色 / 图片
+  │   │   ├── AppIcon.appiconset
+  │   │   └── AccentColor.colorset
+  │   ├── Info.plist              ← App 元信息（可能内联在 project，看版本）
+  │   └── Radix.entitlements      ← 权限声明（沙盒/网络/文件访问）
+  ├── RadixTests/                 ← 单元测试 target
+  └── RadixUITests/               ← UI 测试 target
+
+  重点理解：
+  - RadixApp.swift 里的 @main 是 Swift 5.3+ 的特性，等价于"程序入口"
+  - Assets.xcassets 是个"伪文件夹"——双击在 Xcode 里编辑，不要手动改里面的 JSON
+  - .entitlements 决定你 App 能干什么（联网？读硬盘？用 iCloud？）——沙盒环境下这非常重要
+
+# 调试
+  ┌──────────────┬───────────────────────────────────────┬───────────────────────────────────┐
+  │     工具     │                 用途                  │               类比                │
+  ├──────────────┼───────────────────────────────────────┼───────────────────────────────────┤
+  │ Breakpoint   │ 点行号左侧加断点                      │ 同 VSCode                         │
+  ├──────────────┼───────────────────────────────────────┼───────────────────────────────────┤
+  │ LLDB         │ 底层调试器，Console 里输入 po obj     │ 类似 gdb                          │
+  │              │ 打印对象                              │                                   │
+  ├──────────────┼───────────────────────────────────────┼───────────────────────────────────┤
+  │ View         │ ⌘ 暂停 → Debug View Hierarchy，3D     │ 类似浏览器 DevTools 的 Elements   │
+  │ Debugger     │ 拆解 UI                               │                                   │
+  ├──────────────┼───────────────────────────────────────┼───────────────────────────────────┤
+  │ Instruments  │ 性能/内存/泄漏分析                    │ 类似 Chrome DevTools 的           │
+  │              │                                       │ Performance tab                   │
+  ├──────────────┼───────────────────────────────────────┼───────────────────────────────────┤
+  │ print()      │ 永远的好朋友                          │ console.log                       │
+  └──────────────┴───────────────────────────────────────┴───────────────────────────────────┘
+
+# Apple 特有的概念（绕不开的几个）
+
+  1. Bundle Identifier
+
+  每个 App 的全球唯一 ID，反向域名风格：com.shieason.radix 这个一旦定下来，未来上架/iCloud/Keychain 同步都基于它，改起来代价大——开项目时就要想清楚。
+
+  2. App Sandbox（沙盒）
+
+  - macOS App 默认启用沙盒——你的 App 不能随便读硬盘、不能默认联网
+  - 在 Radix.entitlements 里勾选需要的能力：
+    - com.apple.security.network.client → 联网（调 Claude API 要这个）
+    - com.apple.security.files.user-selected.read-write → 用户主动选的文件
+    - com.apple.security.app-sandbox → 沙盒本身
+  - 不开沙盒也行（开发期），但要上 Mac App Store 必须开
+
+  3. Info.plist
+
+  App 的元信息（版本号、最低系统要求、必要权限的弹窗文案等）。新版 Xcode 把它内联到了 Project 设置里，不一定看到独立文件。
+
+  4. Code Signing
+  
+  所有 macOS App 都必须签名才能运行：
+  - 本地开发：Xcode 自动用你的 Apple ID 签个临时证书（免费），机器换了要重新签
+  - 分发给别人：需要付费 Developer Program（$99/年）拿 Developer ID 证书
+  - 不签名直接运行 → Gatekeeper 拦你 "无法验证开发者"
+```
+```sh
+# 一张图总结
+
+     编写代码 ───→ SwiftUI Preview ───→ Build & Run ───→ 调试
+     (VSCode/Xcode)   (Xcode 必备)        (⌘R)            (LLDB/View Debugger)
+                                            ↓
+                                         本地运行的 .app
+                                            ↓
+                                      (未来) Archive → 公证 → 分发
+
+  整个流程里 Apple 平台最特别的三件事：
+  1. SwiftUI Preview ——开发体验远超 web HMR，记得用
+  2. Code Signing ——所有 App 必须签名，免费账号本地够用
+  3. Sandbox + Entitlements ——能力要在 .entitlements 里显式声明，否则代码运行时静默失败
+```
+
+## vocabulary
+总结本项目的进展, 考虑后续规划.
+我感觉我们把基本项目框架搭好了, 下一步最关键的是把最核心的词库构建起来?
+
+先帮我调研一下, 有哪些好用的词库?
+- 就 GRE 方向, 我最近试了 "GRE3000词" 手机app, 内置了 GRE 高频 3000 词 (2026 版) / 考满分 GRE 全能 6000 词; 其分 list/unit 来划分词库, 一个单元一个单元背感觉更有 "打卡" 的进度感
+```sh
+  ┌──────────────────────────────────┬────────────────────────────────────────────────────────────────────────────────┐
+  │               资源               │                                      价值                                      │
+  ├──────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────┤
+  │ RealKai42/qwerty-learner (15k⭐) │ 有 GRE_equivalent.json — SE 等价词配对数据，对我们的 SE 练习模式很关键         │
+  ├──────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────┤
+  │ skywind3000/ECDICT (12k⭐)       │ 76万词条，含 BNC/COCA 词频数据，可以用更科学的频率排序替代我们目前的交叉验证法 │
+  ├──────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────┤
+  │ 张巍 等价词                      │ ~900 同义词组，专为 GRE Sentence Equivalence 设计                              │
+  └──────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────┘
+```
+
+subagent 为什么跑了这么久? 可以加速吗? (开发效率很重要)
+
+我下载了 /Users/frankshi/Downloads/GRE_2.json | GRE_3.json; 另外从另一个 repo 下载了一些词库:
+- /Users/frankshi/Downloads/GRE-CN-master/L-GRE-词汇/L-GRE-再要你命3000/L-GRE-再要你命3000顺序版/L-GRE-再要你命3000.csv
+- /Users/frankshi/Downloads/GRE-CN-master/L-GRE-词汇/L-GRE-佛脚词汇/L-GRE-佛脚词汇/L-GRE-佛脚词表.csv
+- /Users/frankshi/Downloads/GRE-CN-master/L-GRE-词汇/L-GRE-Magoosh/L-GRE-MagooshFlashcard.csv
+帮我分析一下那个比较好?
+处理脚本写到 scripts/ 目录下, 使用 uv add 管理 python 环境
+```sh
+  词库已经构建好了 ✅：
+  - scripts/build_worddb.py — 一键重建
+  - words.json — 6515 词，66 Lists，字段覆盖率 90%+
+  - 运行: cd scripts && uv run build_worddb.py
+```
+
+先把这个词库加到 erudite 中吧, 我先测试一下 app
+
+可以看到词表了!
+参考 @/Users/frankshi/Projects/.ea-index/.claude-plugin/skills/forge-create/SKILL.md 是不是可以生成一个 done issue?
+
+想一下后续还有哪些事项? 我希望能把整个 app run 起来, 我一边测试一边优化
+创建相应的 issues, 然后开始实现
+
+## basic qa
+基本可用了! 我们快问快答:
+- 首先, 目前的 words schema 是什么? 包含哪些好用/帮助记忆的模块?
+```sh
+# Word Shema 一览
+  Word
+  ├── id / spelling / phonetic          ← 基础标识
+  ├── frequency (1=core, 2=common, 3=advanced)  ← 分级
+  ├── listIndex / unitIndex             ← 打卡结构 (L1U1 ~ L66U10)
+  │
+  ├── definitions[]                     ← 🟢 释义 (100%)
+  │   ├── partOfSpeech ("v", "adj", "n"...)
+  │   ├── chinese ("排挤，取代")
+  │   └── english ("to take the place of...")
+  │
+  ├── examples[]                        ← 🟢 例句 (90%)
+  │   ├── sentence
+  │   └── source ("dictionary" | "magoosh")
+  │
+  ├── synonymGroups[[]]                 ← 🟢 同义词组 (91%) — SE配对练习用
+  │
+  ├── mnemonics[]                       ← 🟡 助记 (65%)
+  │   └── "sup(下面) + plant(种植) → 排挤"
+  │
+  ├── roots: MorphemeBreakdown?         ← 🔴 词根拆解 (0% — 待AI补全)
+  │   ├── segments[{text, type, meaning}]
+  │   └── logic
+  │
+  ├── antonyms[]                        ← 🔴 反义词 (0% — 待补全)
+  ├── sentiment                         ← 🔴 情感极性 (全标neutral — 待AI分类)
+  └── tags[]                            ← 空，预留用户自定义
+
+# 帮助记忆的模块
+  ┌──────────────────────────┬────────┬────────────────────────────────────────────────┐
+  │           模块           │ 覆盖率 │                    记忆价值                    │
+  ├──────────────────────────┼────────┼────────────────────────────────────────────────┤
+  │ mnemonics (助记)         │ 65%    │ ⭐⭐⭐ 词根联想拆解，如 "sup(下面)+plant→排挤" │
+  ├──────────────────────────┼────────┼────────────────────────────────────────────────┤
+  │ synonymGroups (同义词组) │ 91%    │ ⭐⭐⭐ GRE SE 六选二核心                       │
+  ├──────────────────────────┼────────┼────────────────────────────────────────────────┤
+  │ examples (例句)          │ 90%    │ ⭐⭐ 语境记忆，含 Magoosh GRE 语境例句         │
+  ├──────────────────────────┼────────┼────────────────────────────────────────────────┤
+  │ definitions (中英双解)   │ 100%   │ ⭐⭐ 中文快速理解 + 英文精确义                 │
+  ├──────────────────────────┼────────┼────────────────────────────────────────────────┤
+  │ roots (词根拆解)         │ 0%     │ ⭐⭐⭐ 缺失最大的一块 — 系统性构词逻辑         │
+  └──────────────────────────┴────────┴────────────────────────────────────────────────┘
+```
+
+目前的数据库结构如何? 存放在哪里? (我不太了解 swift 机制)
+```sh
+# 数据库机制
+  ┌─────────────────────────────────────────────────────────────┐
+  │  App Bundle (只读，随 app 安装)                               │
+  │  ~/Library/Developer/.../Erudite.app/Contents/Resources/    │
+  │    └── words.json (5.6MB, 6515词 — 源数据)                  │
+  └────────────────────────────┬────────────────────────────────┘
+                               │ 首次启动时 seed
+                               ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │  App Sandbox (读写，用户数据持久化)                            │
+  │  ~/Library/Containers/site.easonsi.Erudite/                 │
+  │    Data/Library/Application Support/Erudite/                │
+  │      └── erudite.db (SQLite — GRDB管理)                     │
+  └─────────────────────────────────────────────────────────────┘
+# 表结构
+  ┌───────────────┬──────┬──────────────────────────────────────────────────────────────┐
+  │      表       │ 行数 │                             作用                             │
+  ├───────────────┼──────┼──────────────────────────────────────────────────────────────┤
+  │ word          │ 6515 │ 词条内容（data 列存完整 JSON blob）                          │
+  ├───────────────┼──────┼──────────────────────────────────────────────────────────────┤
+  │ reviewCard    │ 6515 │ 每词一张 FSRS 卡片（stability, difficulty, due date, state） │
+  ├───────────────┼──────┼──────────────────────────────────────────────────────────────┤
+  │ reviewLog     │ 4    │ 每次评分记录（你刚测试产生的）                               │
+  ├───────────────┼──────┼──────────────────────────────────────────────────────────────┤
+  │ wordList      │ 0    │ 自定义词表分组（预留）                                       │
+  ├───────────────┼──────┼──────────────────────────────────────────────────────────────┤
+  │ wordListEntry │ 0    │ 词表↔词条多对多关联                                          │
+  ├───────────────┼──────┼──────────────────────────────────────────────────────────────┤
+  │ studySession  │ 0    │ 学习会话统计（预留）                                         │
+  ├───────────────┼──────┼──────────────────────────────────────────────────────────────┤
+  │ aiCache       │ 0    │ AI 生成内容缓存（预留）                                      │
+  └───────────────┴──────┴──────────────────────────────────────────────────────────────┘
+# 关键点：
+  - word.data 存的是完整 Word struct 的 JSON — 增删字段不需要改表结构
+  - macOS app 默认沙箱化，数据在 ~/Library/Containers/site.easonsi.Erudite/ 下
+  - 删 app 会清空沙箱（重装等于重置）
+  - 你可以直接用 sqlite3 查询/调试那个 db 文件 
+```
+
+如何演化词库?
+- 一方面, 预处理得到某一版本的词表; 但一些字段可能是缺失的;
+- 在使用 app 的过程中, AI 可能会填补一些字段, 这些字段可以用来优化词表数据吗?
+```sh
+// 基本方案: 版本号 + 可回流更新词库
+# 字段分类
+  ┌─────────────────────────────────┬───────────────────────┬────────────────┐
+  │              字段               │         来源          │     可变性     │
+  ├─────────────────────────────────┼───────────────────────┼────────────────┤
+  │ spelling, phonetic, definitions │ 预构建（固定）        │ 基本不变       │
+  ├─────────────────────────────────┼───────────────────────┼────────────────┤
+  │ frequency, listIndex            │ 预构建（可调）        │ 改版时可能重排 │
+  ├─────────────────────────────────┼───────────────────────┼────────────────┤
+  │ roots                           │ 🤖 AI batch / runtime │ 补全后固化     │
+  ├─────────────────────────────────┼───────────────────────┼────────────────┤
+  │ mnemonics                       │ 🤖 AI + 👤 用户自定义 │ 累加，不覆盖   │
+  ├─────────────────────────────────┼───────────────────────┼────────────────┤
+  │ antonyms, sentiment             │ 🤖 AI batch           │ 补全后固化     │
+  ├─────────────────────────────────┼───────────────────────┼────────────────┤
+  │ synonymGroups                   │ 预构建 + AI 扩展      │ 可增不删       │
+  └─────────────────────────────────┴───────────────────────┴────────────────┘
+```
+
+## voice & keyboard shortcuts
+生成一个 issue 留待后续优化 (不是特别紧急); 下面想两个更重要的:
+- 我希望在学习一个单词的时候, 默认就可以听到发音, 辅助记忆,
+    - 这一块, 我感觉可以参考 qwerty-learner? 看看它的数据源是什么? 我 clone 到了 /Users/frankshi/Projects/_inbox/repo/RealKai42/qwerty-learner 你可以参看
+- 有什么快捷键体系? 
+    - 我希望在学习过程中, 纯键盘操作, 更流畅一些;
+    - 快捷键系统有什么方法论吗?
+```sh
+# macOS app 的选项：
+  ┌────────────────────────────────┬────────┬────────┬─────────┬───────────────────┐
+  │              方案              │  质量  │  延迟  │  离线   │    实现复杂度     │
+  ├────────────────────────────────┼────────┼────────┼─────────┼───────────────────┤
+  │ AVSpeechSynthesizer (系统 TTS) │ ⭐⭐   │ 0ms    │ ✅      │ 极简 (3行代码)    │
+  ├────────────────────────────────┼────────┼────────┼─────────┼───────────────────┤
+  │ 有道 API (同 qwerty-learner)   │ ⭐⭐⭐ │ ~200ms │ ❌      │ 简单 (URLSession) │
+  ├────────────────────────────────┼────────┼────────┼─────────┼───────────────────┤
+  │ 组合: 有道优先 + TTS 兜底      │ ⭐⭐⭐ │ ~200ms │ ✅ 兜底 │ 中等              │
+  └────────────────────────────────┴────────┴────────┴─────────┴───────────────────┘
+```
+```sh
+# 快捷键体系
+
+  方法论：Vim-like 分层 + 渐进披露
+
+  原则:
+  1. 最高频操作 → 单键 (不需要修饰符)
+  2. 左手主区 → 动作键 (不用移手)
+  3. 空格 = 核心确认键 (最大的键, 最快按到)
+  4. 数字 = 分级选择 (自然映射)
+  5. 不跟系统快捷键冲突
+
+  学习模式快捷键设计
+
+  ━━━━ 卡片学习流程 ━━━━
+
+  Space       → 翻转/显示答案 (核心操作)
+  1 / j       → Again (再来)
+  2 / k       → Hard  (困难)
+  3 / l       → Good  (记住了)
+  4 / ;       → Easy  (太简单)
+
+  ━━━━ 导航 ━━━━
+
+  → / n       → 跳过当前卡 (不评分)
+  ← / p       → 回看上一张 (只看, 不改评分)
+  Esc / q     → 结束本次学习
+
+  ━━━━ 辅助 ━━━━
+
+  r           → 重播发音
+  e           → 展开/收起例句
+  m           → 显示助记
+  s           → 显示同义词
+  Tab         → 切换 中文释义 / 英文释义
+```
+
+开始实现!
+// ~/.claude-internal/plans/hashed-snuggling-scroll.md
+
+快捷键优化:
+1. 我在 Today 按 "Start Learning" 之后, 需要到 Learn 页面点击单词卡片才激活快捷键模式, 需要额外一步鼠标操作;
+2. Space → 翻转/显示答案, 目前重复按好像无法 toggle
+3. 前后导航
+  → / n       → 跳过当前卡 (不评分)
+  ← / p       → 回看上一张 (只看, 不改评分)
+
+整理上面的实现为 issue
+
 
 # Notes
+[todo]
+- [ ] chatbot sidebar; daily review
+- [x] vocabulary?
+- [x] keybaord shortcuts
+- [ ] feat: dictionary
+- [ ] FSRS: 基础实现, 后续待优化
+
+[notes]
 - macos 开发工具链
   - [Xcode](https://developer.apple.com/xcode)
   - [sf-symbols](https://developer.apple.com/sf-symbols/): 图标开发
@@ -358,3 +697,18 @@ Unable to obtain a task name port right for pid 401: (os/kern) failure (0x5)
   - 在 Xcode 中新建项目, 从而生成 `Erudite.xcodeproj` 等文件
   - 项目目录结构: erudite/Erudite/Erudite.xcodeproj 的形式; vscode 编辑根目录; Xcode 打开project (`open /Users/frankshi/Projects/app/erudite/Erudite/Erudite.xcodeproj`)
   - swift -> xcode 的好处: 断点调试、Instruments 性能分析、代码签名、网络 entitlement（后续接 AI API）、正确的 .app bundle 分发。
+- Erudite 项目
+  - 工具:
+    - GRDB: [github](https://github.com/groue/GRDB.swift) Swift 生态下的 sqlite 工具
+    - FSRS (Free Spaced Repetition Scheduler) 模型 [墨墨背单词](https://memodocs.maimemo.com/docs/2022_KDD) 开源的 [group](https://github.com/open-spaced-repetition); [算法说明](https://github.com/open-spaced-repetition/awesome-fsrs/wiki/The-Algorithm)
+  - 词库:
+    - [dict](https://github.com/kajweb/dict/) -- 爬取自有道背单词
+    - [ECDICT](https://github.com/skywind3000/ECDICT) "Free English to Chinese Dictionary Database", 词典很全
+    - [Qwerty Learner](https://github.com/RealKai42/qwerty-learner) 22k [web](https://qwerty.kaiyi.cool/); 支持 vscode 插件, 也有在线版
+      - 词库包括: GMAT, GRE, IELTS, SAT, TOEFL, CET-4, CET-6. e.g. [gre3000](https://github.com/RealKai42/qwerty-learner/blob/master/public/dicts/GRE3000_3_T.json) 但内容比较简单; 发音方案如何做的?
+      - 同义词: [gre-equivalent](https://github.com/RealKai42/qwerty-learner/blob/master/public/dicts/GRE_equivalent.json) 
+- features
+  - FSRS: 核心记忆逻辑, @Erudite/Erudite/Engine/FSRS/FSRSEngine.swift
+    - ⚠️  当前是 stub，还没实现完整 FSRS-5
+  - keybaord shortcuts
+  - 自动语音播放

@@ -1,0 +1,9 @@
+[project]
+name = "erudite"
+version = "0.1.0"
+description = "Data processing & enrichment scripts for Erudite GRE vocab app"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+build-worddb = "scripts.build_worddb:main"
