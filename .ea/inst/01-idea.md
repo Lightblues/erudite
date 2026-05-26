@@ -474,4 +474,7 @@ Unable to obtain a task name port right for pid 401: (os/kern) failure (0x5)
     - FSRS (Free Spaced Repetition Scheduler) 模型 [墨墨背单词](https://memodocs.maimemo.com/docs/2022_KDD) 开源的 [group](https://github.com/open-spaced-repetition); [算法说明](https://github.com/open-spaced-repetition/awesome-fsrs/wiki/The-Algorithm)
   - 词库:
     - [dict](https://github.com/kajweb/dict/) -- 爬取自有道背单词
-    - [Qwerty Learner](https://github.com/RealKai42/qwerty-learner) 22k [web](https://qwerty.kaiyi.cool/)
+    - [ECDICT](https://github.com/skywind3000/ECDICT) "Free English to Chinese Dictionary Database", 词典很全
+    - [Qwerty Learner](https://github.com/RealKai42/qwerty-learner) 22k [web](https://qwerty.kaiyi.cool/); 支持 vscode 插件, 也有在线版
+      - 词库包括: GMAT, GRE, IELTS, SAT, TOEFL, CET-4, CET-6. e.g. [gre3000](https://github.com/RealKai42/qwerty-learner/blob/master/public/dicts/GRE3000_3_T.json) 但内容比较简单; 发音方案如何做的?
+      - 同义词: [gre-equivalent](https://github.com/RealKai42/qwerty-learner/blob/master/public/dicts/GRE_equivalent.json) 

@@ -153,6 +153,33 @@ nonisolated(unsafe) final class DatabaseService: Sendable {
         }
     }
 
+    func fetchWord(id: String) throws -> Word? {
+        let decoder = JSONDecoder()
+        return try dbQueue.read { db in
+            guard let row = try Row.fetchOne(db, sql: "SELECT data FROM word WHERE id = ?", arguments: [id]) else {
+                return nil
+            }
+            guard let data = row["data"] as? Data else { return nil }
+            return try? decoder.decode(Word.self, from: data)
+        }
+    }
+
+    func fetchWords(ids: [String]) throws -> [String: Word] {
+        let decoder = JSONDecoder()
+        return try dbQueue.read { db in
+            let placeholders = ids.map { _ in "?" }.joined(separator: ", ")
+            let sql = "SELECT id, data FROM word WHERE id IN (\(placeholders))"
+            let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(ids))
+            var result: [String: Word] = [:]
+            for row in rows {
+                guard let data = row["data"] as? Data,
+                      let word = try? decoder.decode(Word.self, from: data) else { continue }
+                result[word.id] = word
+            }
+            return result
+        }
+    }
+
     // MARK: - ReviewCard Operations
 
     func createCardsForNewWords(_ words: [Word]) throws {
@@ -233,6 +260,42 @@ nonisolated(unsafe) final class DatabaseService: Sendable {
                     card.id.uuidString
                 ]
             )
+        }
+    }
+
+    func insertReviewLog(_ log: ReviewLog) throws {
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO reviewLog (cardId, rating, state, timestamp, elapsedDays, scheduledDays, reviewDuration)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                arguments: [
+                    log.cardId.uuidString,
+                    log.rating.rawValue,
+                    log.state.rawValue,
+                    log.timestamp,
+                    log.elapsedDays,
+                    log.scheduledDays,
+                    log.reviewDuration
+                ]
+            )
+        }
+    }
+
+    func fetchDueCount(now: Date = Date()) throws -> Int {
+        try dbQueue.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM reviewCard WHERE state != 0 AND dueDate <= ?",
+                arguments: [now]
+            ) ?? 0
+        }
+    }
+
+    func fetchNewCount() throws -> Int {
+        try dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM reviewCard WHERE state = 0") ?? 0
         }
     }
 

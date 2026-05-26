@@ -73,9 +73,14 @@ struct LibraryView: View {
 
     private var wordListView: some View {
         List(filteredWords) { word in
-            WordRow(word: word)
+            NavigationLink(value: word) {
+                WordRow(word: word)
+            }
         }
         .listStyle(.inset)
+        .navigationDestination(for: Word.self) { word in
+            WordDetailView(word: word)
+        }
     }
 
     private func loadWords() async {

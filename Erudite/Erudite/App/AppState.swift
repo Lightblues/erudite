@@ -6,6 +6,9 @@ final class AppState {
     var selectedTab: SidebarTab = .today
     var isDBReady: Bool = false
     var wordCount: Int = 0
+    var dueCount: Int = 0
+    var newCount: Int = 0
+    var studyMode: StudyQueueMode = .mixed
 
     private(set) var databaseService: DatabaseService?
 
@@ -17,9 +20,25 @@ final class AppState {
             self.databaseService = db
             self.wordCount = try db.fetchAllWords().count
             self.isDBReady = true
+            refreshStats()
         } catch {
             print("Failed to initialize database: \(error)")
         }
+    }
+
+    func refreshStats() {
+        guard let db = databaseService else { return }
+        do {
+            dueCount = try db.fetchDueCount()
+            newCount = try db.fetchNewCount()
+        } catch {
+            print("Failed to refresh stats: \(error)")
+        }
+    }
+
+    func startStudy(mode: StudyQueueMode = .mixed) {
+        studyMode = mode
+        selectedTab = .study
     }
 }
 
