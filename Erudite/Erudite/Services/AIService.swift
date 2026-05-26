@@ -3,11 +3,12 @@ import Foundation
 // MARK: - AI Service
 // High-level AI capabilities built on top of AIProvider.
 
+@MainActor
 final class AIService {
     private let provider: AIProvider
 
-    init(provider: AIProvider = ClaudeProvider()) {
-        self.provider = provider
+    init(provider: AIProvider? = nil) {
+        self.provider = provider ?? ClaudeProvider()
     }
 
     // MARK: - Per-Word

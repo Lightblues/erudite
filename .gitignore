@@ -27,3 +27,4 @@ Packages/
 *.key
 
 Sources/Erudite/Resources/Data/words.json
+Erudite/Erudite/Resources/Data/words.json

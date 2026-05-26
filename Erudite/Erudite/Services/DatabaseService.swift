@@ -4,7 +4,7 @@ import GRDB
 // MARK: - Database Service
 // Wraps GRDB for all local persistence.
 
-final class DatabaseService {
+nonisolated(unsafe) final class DatabaseService: Sendable {
     let dbQueue: DatabaseQueue
 
     init() throws {

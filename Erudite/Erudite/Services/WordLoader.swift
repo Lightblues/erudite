@@ -21,7 +21,7 @@ struct WordLoader {
 
     /// Load words from the bundled words.json resource
     static func loadBundledWords() throws -> [Word] {
-        guard let url = Bundle.module.url(forResource: "words", withExtension: "json", subdirectory: "Data") else {
+        guard let url = Bundle.main.url(forResource: "words", withExtension: "json", subdirectory: "Data") else {
             throw WordLoaderError.fileNotFound
         }
 

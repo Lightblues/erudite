@@ -4,6 +4,7 @@ import Foundation
 // Full algorithm implementation in a future issue.
 // This stub returns fixed intervals to allow UI development.
 
+@MainActor
 final class FSRSEngine {
 
     // MARK: - Scheduling Result

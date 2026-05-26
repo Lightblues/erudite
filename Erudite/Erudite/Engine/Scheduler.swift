@@ -3,6 +3,7 @@ import Foundation
 // MARK: - Scheduler
 // Determines which cards to study in a session (due reviews + new cards)
 
+@MainActor
 final class Scheduler {
     private let parameters: FSRSParameters
 

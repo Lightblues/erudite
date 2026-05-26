@@ -150,7 +150,8 @@
 ```
 配置 gitignore
 
-## debug
+
+## debug -> Xcode project
 跑到下面不动了, 好像没有弹出来一个 app?
 ```sh
 ➜ swift run
@@ -198,7 +199,7 @@ Build of product 'Erudite' complete! (35.42s)
   └──────────┴────────────────────┴───────────────────────────────────┘
 ```
 - 规范开发流程: 后续统一走 Xcode 来编译 app 出来. 这样的话, 还有必要保留 Package.swift 吗?
-- 修复 Xcode 报错: 
+- 修复 Xcode 报错: (只是 warning!)
 ```sh
 Unable to get synchronousRemoteObjectProxy, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
 Error registering app with intents framework: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
@@ -238,8 +239,61 @@ Unable to obtain a task name port right for pid 401: (os/kern) failure (0x5)
   - Entitlements（网络访问权限 — 后续接 AI API 必须）
   - 代码签名
   - App 图标
-```
 
+  在 Xcode 中操作：
+
+  1. File → New → Project
+  2. 选 macOS → App
+  3. 配置:
+     - Product Name: Erudite
+     - Organization Identifier: com.yourname (如 com.frankshi)
+     - Interface: SwiftUI
+     - Language: Swift
+     - 保存到 /Users/frankshi/Projects/app/erudite/ (覆盖)
+  4. 删除 Xcode 自动生成的 ContentView.swift 等模板文件
+  5. 把 Sources/Erudite/ 下的文件拖入项目
+  6. File → Add Package Dependencies → 添加 GRDB.swift
+```
+我创建之后放到了 /Users/frankshi/Projects/app/erudite/Erudite/ 中, 帮调整一下
+
+总结一下:
+- 我们将项目从 swift 项目转为 Xcode 项目 (通过 Xcode.app 创建), 从而引入了 Xcode 的一些特性 (有利于后期开发)
+- 将原本的代码都迁移到了 Erudite/Erudite/ 目录下
+  - 这样在 erudite/ 根目录下创建一个子目录 (一个 Xcode 项目的开发模式常见吗? 大小写命名规范?)
+  - 之前的 Tests/ Package.swift 为什么都不需要了?
+```sh
+# 迁移了什么
+  ┌───────────────────────────┬──────────────────────────────────────────────────────────┐
+  │      之前 (SPM 项目)      │                    现在 (Xcode 项目)                     │
+  ├───────────────────────────┼──────────────────────────────────────────────────────────┤
+  │ Package.swift 定义项目    │ Erudite.xcodeproj 定义项目                               │
+  ├───────────────────────────┼──────────────────────────────────────────────────────────┤
+  │ Sources/Erudite/ 放代码   │ Erudite/Erudite/ 放代码                                  │
+  ├───────────────────────────┼──────────────────────────────────────────────────────────┤
+  │ swift build / swift run   │ Xcode ▶️  Run                                             │
+  ├───────────────────────────┼──────────────────────────────────────────────────────────┤
+  │ 无 Info.plist / Bundle ID │ ✅ 自动生成 Info.plist, Bundle ID = site.easonsi.Erudite │
+  ├───────────────────────────┼──────────────────────────────────────────────────────────┤
+  │ 无签名 / 无 entitlements  │ ✅ 自动签名 + App Sandbox                                │
+  ├───────────────────────────┼──────────────────────────────────────────────────────────┤
+  │ Bundle.module 加载资源    │ Bundle.main 加载资源                                     │
+  └───────────────────────────┴──────────────────────────────────────────────────────────┘
+  Xcode 项目带来的好处：断点调试、Instruments 性能分析、代码签名、网络 entitlement（后续接 AI
+  API）、正确的 .app bundle 分发。
+```
+```sh
+# Xcode 项目的标准结构：
+  myproject/              ← git 仓库根目录 (小写, kebab-case 或 lowercase)
+  ├── .git/
+  ├── .gitignore
+  ├── README.md
+  ├── MyApp/              ← Xcode 项目目录 (PascalCase, 与产品名一致)
+  │   ├── MyApp.xcodeproj
+  │   └── MyApp/          ← 源码目录 (与 target 名一致)
+  │       └── ...
+  └── MyAppTests/         ← 测试 target (可选)
+```
+这种项目结构的话, 我在 vscode 中可以打开根目录; 那么在 Xcode 中应该打开 .xcodeproj 还是 根目录?
 
 
 ## branch 2
@@ -289,8 +343,12 @@ Unable to obtain a task name port right for pid 401: (os/kern) failure (0x5)
   - MVP 阶段：免费账号完全够，本地 Run/Debug 不受限
 ```
 
+我安装好 Xcode 了, 先来给我普及一下, macos app 的开发流程是怎样的?
+
 # Notes
 - macos 开发工具链
-    - [Xcode](https://developer.apple.com/xcode)
-    - [sf-symbols](https://developer.apple.com/sf-symbols/): 图标开发
-
+  - [Xcode](https://developer.apple.com/xcode)
+  - [sf-symbols](https://developer.apple.com/sf-symbols/): 图标开发
+- 开发流程: 
+  - 在 Xcode 中新建项目, 从而升成 `Erudite.xcodeproj` 等文件
+  - swift -> xcode 的好处: 断点调试、Instruments 性能分析、代码签名、网络 entitlement（后续接 AI API）、正确的 .app bundle 分发。

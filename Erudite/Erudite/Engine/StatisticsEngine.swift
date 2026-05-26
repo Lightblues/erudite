@@ -3,6 +3,7 @@ import Foundation
 // MARK: - Statistics Engine
 // Aggregates review data for dashboard display
 
+@MainActor
 final class StatisticsEngine {
 
     struct DailyStats {

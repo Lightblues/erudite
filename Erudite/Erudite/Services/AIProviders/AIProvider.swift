@@ -2,6 +2,7 @@ import Foundation
 
 // MARK: - AI Provider Protocol
 
+@MainActor
 protocol AIProvider {
     /// Generate a text response from a prompt
     func generate(prompt: String, system: String?) async throws -> String
