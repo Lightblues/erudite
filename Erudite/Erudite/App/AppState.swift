@@ -66,13 +66,14 @@ final class AppState {
 
     func startStudy(mode: StudyQueueMode = .mixed) {
         studyMode = mode
-        selectedTab = .study
+        selectedTab = .flashcard
     }
 }
 
 enum SidebarTab: String, CaseIterable, Identifiable {
     case today = "Today"
-    case study = "Learn"
+    case flashcard = "Flashcard"
+    case typing = "Typing"
     case library = "Library"
     case dashboard = "Stats"
 
@@ -81,7 +82,8 @@ enum SidebarTab: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .today: "house"
-        case .study: "book"
+        case .flashcard: "book"
+        case .typing: "keyboard"
         case .library: "books.vertical"
         case .dashboard: "chart.bar"
         }

@@ -28,8 +28,10 @@ struct ContentView: View {
         switch tab {
         case .today:
             TodayView()
-        case .study:
+        case .flashcard:
             StudyView()
+        case .typing:
+            TypingView()
         case .library:
             LibraryView()
         case .dashboard:

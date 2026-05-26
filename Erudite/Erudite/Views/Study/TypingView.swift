@@ -36,6 +36,13 @@ struct TypingView: View {
             handleKeyPress(press)
         }
         .onAppear { isFocused = true }
+        .onChange(of: appState.selectedTab) {
+            if appState.selectedTab == .typing {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    isFocused = true
+                }
+            }
+        }
         .task {
             if let db = appState.databaseService {
                 viewModel.start(database: db, bookId: appState.activeBookId)
@@ -57,19 +64,24 @@ struct TypingView: View {
             // Main typing area
             Spacer()
 
-            VStack(spacing: 24) {
-                // Definition + phonetic
-                if let word = viewModel.currentWord {
-                    wordInfoSection(word: word)
+            if viewModel.showWordCard, let word = viewModel.currentWord {
+                // Full word card (like flashcard mode)
+                wordCardView(word: word)
+            } else {
+                VStack(spacing: 24) {
+                    // Definition + phonetic
+                    if let word = viewModel.currentWord {
+                        wordInfoSection(word: word)
+                    }
+
+                    // Letter slots
+                    letterSlotsView
+
+                    // Prev/Next preview
+                    navigationPreview
                 }
-
-                // Letter slots
-                letterSlotsView
-
-                // Prev/Next preview
-                navigationPreview
+                .frame(maxWidth: 600)
             }
-            .frame(maxWidth: 600)
 
             Spacer()
 
@@ -87,7 +99,7 @@ struct TypingView: View {
     private var headerBar: some View {
         HStack {
             // Chapter info
-            Text("Chapter \(viewModel.chapterIndex + 1) / \(viewModel.totalChapters)")
+            Text("Ch \(viewModel.chapterIndex + 1)/\(viewModel.totalChapters)")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -112,18 +124,30 @@ struct TypingView: View {
 
             Spacer()
 
-            // Mode toggle
-            Button {
-                viewModel.toggleDictation()
-            } label: {
-                Label(
-                    viewModel.displayMode == .typing ? "Dictation" : "Typing",
-                    systemImage: viewModel.displayMode == .typing ? "eye.slash" : "eye"
-                )
-                .font(.caption)
+            // Mode toggles
+            HStack(spacing: 8) {
+                // Dictation toggle
+                Button {
+                    viewModel.toggleDictation()
+                } label: {
+                    Image(systemName: viewModel.displayMode == .typing ? "eye" : "eye.slash")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Toggle dictation mode (Tab)")
+
+                // Error mode toggle
+                Button {
+                    viewModel.errorMode = viewModel.errorMode == .retryChar ? .resetWord : .retryChar
+                } label: {
+                    Image(systemName: viewModel.errorMode == .retryChar ? "arrow.uturn.left.circle" : "arrow.counterclockwise")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help(viewModel.errorMode == .retryChar ? "Error: retry char" : "Error: reset word")
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+
+            Spacer()
 
             // Exit
             Button {
@@ -132,7 +156,6 @@ struct TypingView: View {
                 Image(systemName: "xmark")
             }
             .buttonStyle(.borderless)
-            .keyboardShortcut(.escape, modifiers: [])
         }
     }
 
@@ -161,6 +184,63 @@ struct TypingView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    // MARK: - Full Word Card
+
+    private func wordCardView(word: Word) -> some View {
+        VStack(spacing: 16) {
+            Text(word.spelling)
+                .font(.system(size: 36, weight: .bold, design: .serif))
+
+            if let phonetic = word.phonetic {
+                Text(phonetic)
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+            }
+
+            Divider().frame(maxWidth: 300)
+
+            ForEach(Array(word.definitions.enumerated()), id: \.offset) { _, def in
+                HStack(spacing: 8) {
+                    if !def.partOfSpeech.isEmpty {
+                        Text(def.partOfSpeech)
+                            .font(.callout)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.blue)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        if !def.chinese.isEmpty {
+                            Text(def.chinese)
+                        }
+                        if !def.english.isEmpty {
+                            Text(def.english)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+
+            if !word.synonymGroups.isEmpty {
+                HStack {
+                    Text("Syn:")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(word.synonymGroups.flatMap { $0 }.prefix(5).joined(separator: ", "))
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                }
+            }
+
+            Text("Press Space to dismiss")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .padding(.top, 8)
+        }
+        .padding(24)
+        .frame(maxWidth: 500)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
     }
 
     // MARK: - Letter Slots
@@ -221,15 +301,20 @@ struct TypingView: View {
 
     private var navigationPreview: some View {
         HStack {
-            // Previous word
+            // Previous word (clickable)
             if let prev = viewModel.previousWord {
-                HStack(spacing: 4) {
-                    Image(systemName: "chevron.left")
-                        .font(.caption2)
-                    Text(prev.spelling)
-                        .font(.caption)
+                Button {
+                    viewModel.goBack()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                            .font(.caption2)
+                        Text(prev.spelling)
+                            .font(.caption)
+                    }
+                    .foregroundStyle(.tertiary)
                 }
-                .foregroundStyle(.tertiary)
+                .buttonStyle(.plain)
             } else {
                 Spacer().frame(width: 80)
             }
@@ -251,15 +336,20 @@ struct TypingView: View {
 
             Spacer()
 
-            // Next word
+            // Next word (clickable)
             if let next = viewModel.nextWord {
-                HStack(spacing: 4) {
-                    Text(viewModel.displayMode == .dictation ? "•••" : next.spelling)
-                        .font(.caption)
-                    Image(systemName: "chevron.right")
-                        .font(.caption2)
+                Button {
+                    viewModel.skipWord()
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(viewModel.displayMode == .dictation ? "•••" : next.spelling)
+                            .font(.caption)
+                        Image(systemName: "chevron.right")
+                            .font(.caption2)
+                    }
+                    .foregroundStyle(.tertiary)
                 }
-                .foregroundStyle(.tertiary)
+                .buttonStyle(.plain)
             } else {
                 Spacer().frame(width: 80)
             }
@@ -273,35 +363,41 @@ struct TypingView: View {
         ScrollViewReader { proxy in
             List {
                 ForEach(Array(viewModel.words.enumerated()), id: \.element.id) { index, word in
-                    HStack {
-                        Text("\(index + 1)")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .frame(width: 24, alignment: .trailing)
-
-                        Text(word.spelling)
-                            .font(.body.monospaced())
-                            .fontWeight(index == viewModel.currentIndex ? .bold : .regular)
-
-                        Spacer()
-
-                        if let def = word.definitions.first {
-                            Text(def.chinese)
+                    Button {
+                        viewModel.goToWord(at: index)
+                        showWordList = false
+                    } label: {
+                        HStack {
+                            Text("\(index + 1)")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
+                                .foregroundStyle(.tertiary)
+                                .frame(width: 24, alignment: .trailing)
 
-                        if index < viewModel.currentIndex {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                                .font(.caption)
-                        } else if index == viewModel.currentIndex {
-                            Image(systemName: "pencil.circle.fill")
-                                .foregroundStyle(.blue)
-                                .font(.caption)
+                            Text(word.spelling)
+                                .font(.body.monospaced())
+                                .fontWeight(index == viewModel.currentIndex ? .bold : .regular)
+
+                            Spacer()
+
+                            if let def = word.definitions.first {
+                                Text(def.chinese)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+
+                            if index < viewModel.wordsCompleted {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                    .font(.caption)
+                            } else if index == viewModel.currentIndex {
+                                Image(systemName: "pencil.circle.fill")
+                                    .foregroundStyle(.blue)
+                                    .font(.caption)
+                            }
                         }
                     }
+                    .buttonStyle(.plain)
                     .id(word.id)
                     .listRowBackground(index == viewModel.currentIndex ? Color.accentColor.opacity(0.1) : Color.clear)
                 }
@@ -324,7 +420,7 @@ struct TypingView: View {
             Button {
                 viewModel.previousChapter()
             } label: {
-                Label("Prev Chapter", systemImage: "chevron.left")
+                Label("Prev Ch", systemImage: "chevron.left")
             }
             .buttonStyle(.borderless)
             .disabled(viewModel.chapterIndex == 0)
@@ -334,8 +430,9 @@ struct TypingView: View {
             // Shortcuts hint
             HStack(spacing: 12) {
                 shortcutHint("Tab", "Dictation")
-                shortcutHint("R", "Replay")
-                shortcutHint("→", "Skip")
+                shortcutHint("⌘R", "Replay")
+                shortcutHint("Space", "Card")
+                shortcutHint("←→", "Nav")
                 shortcutHint("Esc", "Exit")
             }
 
@@ -344,7 +441,7 @@ struct TypingView: View {
             Button {
                 viewModel.nextChapter()
             } label: {
-                Label("Next Chapter", systemImage: "chevron.right")
+                Label("Next Ch", systemImage: "chevron.right")
             }
             .buttonStyle(.borderless)
             .disabled(viewModel.chapterIndex >= viewModel.totalChapters - 1)
@@ -404,34 +501,66 @@ struct TypingView: View {
     // MARK: - Key Handling
 
     private func handleKeyPress(_ press: KeyPress) -> KeyPress.Result {
-        // Letter input
-        let chars = press.characters.lowercased()
-        if chars.count == 1, let char = chars.first, char.isLetter {
-            viewModel.handleKeystroke(char)
+        guard viewModel.phase == .typing else { return .ignored }
+
+        // Space: toggle word card view
+        if press.key == .space {
+            viewModel.toggleWordCard()
             return .handled
         }
 
-        // Special keys
-        switch press.key {
-        case .tab:
+        // Cmd+R: replay (avoids conflict with typing 'r')
+        if press.key == KeyEquivalent("r") && press.modifiers.contains(.command) {
+            viewModel.replayPronunciation()
+            return .handled
+        }
+
+        // Tab: toggle dictation
+        if press.key == .tab {
             viewModel.toggleDictation()
             return .handled
-        case .escape:
+        }
+
+        // Arrow keys: navigate words
+        if press.key == .leftArrow {
+            viewModel.goBack()
+            return .handled
+        }
+        if press.key == .rightArrow {
+            viewModel.skipWord()
+            return .handled
+        }
+
+        // Escape: exit
+        if press.key == .escape {
             appState.selectedTab = .today
             return .handled
-        case .return:
+        }
+
+        // Return: advance if word complete
+        if press.key == .return {
             if viewModel.isWordComplete {
                 viewModel.skipWord()
             }
             return .handled
-        case KeyEquivalent("r"):
-            viewModel.replayPronunciation()
-            return .handled
-        case .rightArrow:
-            viewModel.skipWord()
-            return .handled
-        default:
-            return .ignored
         }
+
+        // Letter input (only when card not showing)
+        if !viewModel.showWordCard {
+            let chars = press.characters.lowercased()
+            if chars.count == 1, let char = chars.first, char.isLetter {
+                viewModel.handleKeystroke(char)
+                return .handled
+            }
+            // Handle hyphen and space in words
+            if press.characters == "-" || press.characters == " " {
+                if let char = press.characters.first {
+                    viewModel.handleKeystroke(char)
+                    return .handled
+                }
+            }
+        }
+
+        return .ignored
     }
 }

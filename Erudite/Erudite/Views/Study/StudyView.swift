@@ -8,13 +8,7 @@ struct StudyView: View {
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        Group {
-            if appState.studyMode == .typing {
-                TypingView()
-            } else {
-                flashcardContent
-            }
-        }
+        flashcardContent
     }
 
     private var flashcardContent: some View {
@@ -50,7 +44,7 @@ struct StudyView: View {
         }
         .onChange(of: appState.selectedTab) {
             // Re-focus when switching back to study tab
-            if appState.selectedTab == .study {
+            if appState.selectedTab == .flashcard {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     isFocused = true
                 }

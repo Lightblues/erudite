@@ -41,11 +41,11 @@ struct TodayView: View {
                 ActionButton(title: "Start Learning", icon: "book", color: .blue) {
                     appState.startStudy(mode: .mixed)
                 }
-                ActionButton(title: "Type Practice", icon: "keyboard", color: .indigo) {
-                    appState.startStudy(mode: .typing)
-                }
                 ActionButton(title: "Review Due", icon: "arrow.clockwise", color: .green) {
                     appState.startStudy(mode: .reviewOnly)
+                }
+                ActionButton(title: "Type Practice", icon: "keyboard", color: .indigo) {
+                    appState.selectedTab = .typing
                 }
             }
 
