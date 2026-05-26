@@ -169,6 +169,31 @@ nonisolated(unsafe) final class DatabaseService: Sendable {
         }
     }
 
+    func fetchWordsPage(inBook bookId: String, offset: Int, limit: Int) throws -> [Word] {
+        let decoder = JSONDecoder()
+        return try dbQueue.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT w.data FROM word w
+                JOIN wordListEntry wle ON wle.wordId = w.id
+                WHERE wle.listId = ?
+                ORDER BY wle.sortOrder
+                LIMIT ? OFFSET ?
+                """, arguments: [bookId, limit, offset])
+            return rows.compactMap { row in
+                guard let data = row["data"] as? Data else { return nil }
+                return try? decoder.decode(Word.self, from: data)
+            }
+        }
+    }
+
+    func fetchWordCount(inBook bookId: String) throws -> Int {
+        try dbQueue.read { db in
+            try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM wordListEntry WHERE listId = ?
+                """, arguments: [bookId]) ?? 0
+        }
+    }
+
     func fetchWord(id: String) throws -> Word? {
         let decoder = JSONDecoder()
         return try dbQueue.read { db in

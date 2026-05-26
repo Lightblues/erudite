@@ -9,6 +9,16 @@ struct StudyView: View {
 
     var body: some View {
         Group {
+            if appState.studyMode == .typing {
+                TypingView()
+            } else {
+                flashcardContent
+            }
+        }
+    }
+
+    private var flashcardContent: some View {
+        Group {
             switch viewModel.phase {
             case .loading:
                 ProgressView("Loading cards...")

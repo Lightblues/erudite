@@ -161,6 +161,9 @@ final class StudyViewModel {
                 cards = try db.fetchDueCards(inBook: bookId)
             case .newOnly:
                 cards = try db.fetchNewCards(limit: 20, inBook: bookId)
+            case .typing:
+                // Typing mode uses its own ViewModel; this won't be called
+                return
             }
 
             guard !cards.isEmpty else {
@@ -221,4 +224,5 @@ enum StudyQueueMode {
     case mixed      // new + due
     case reviewOnly // due cards only
     case newOnly    // new cards only
+    case typing     // typing practice (qwerty-learner style)
 }
