@@ -328,7 +328,7 @@ Unable to obtain a task name port right for pid 401: (os/kern) failure (0x5)
 2. 词表: 合理的, 应该内置已有词表+支持外部导入
 下面讨论具体的 UI 交互设计
 
-## macos dev
+## macos dev workflow
 先来帮我配置 macos 原生开发所需要的工具? 我之前主要用 vscode+cli 工具, 有什么需要新安装的吗
 ```sh
 # 一、必装（Required）
@@ -349,6 +349,116 @@ Unable to obtain a task name port right for pid 401: (os/kern) failure (0x5)
 ```
 
 我安装好 Xcode 了, 先来给我普及一下, macos app 的开发流程是怎样的?
+```sh
+# 心智模型对照
+  ┌───────────────┬────────────────────────────────────────┬──────────────────────────────────┐
+  │ Web/Node 概念 │            Xcode/Swift 对应            │               区别               │
+  ├───────────────┼────────────────────────────────────────┼──────────────────────────────────┤
+  │ package.json  │ .xcodeproj / .xcworkspace              │ 二进制可编辑文件，不是 JSON      │
+  ├───────────────┼────────────────────────────────────────┼──────────────────────────────────┤
+  │ src/          │ App target 下的文件夹                  │ 物理目录和 Xcode                 │
+  │               │                                        │ 里看到的"虚拟分组"可以不一致     │
+  ├───────────────┼────────────────────────────────────────┼──────────────────────────────────┤
+  │ npm install   │ Swift Package Manager（在 Xcode 里加） │ 锁文件叫 Package.resolved        │
+  ├───────────────┼────────────────────────────────────────┼──────────────────────────────────┤
+  │ npm run dev   │ 选 Scheme → ⌘R（Run）                  │ 没有 watch 模式，但有 SwiftUI    │
+  │               │                                        │ Preview（更强）                  │
+  ├───────────────┼────────────────────────────────────────┼──────────────────────────────────┤
+  │ webpack/vite  │ xcodebuild                             │ 一般你不直接调用，Xcode 帮你跑   │
+  ├───────────────┼────────────────────────────────────────┼──────────────────────────────────┤
+  │ node_modules/ │ ~/Library/Developer/Xcode/DerivedData/ │ 编译缓存放用户目录，不进项目     │
+  ├───────────────┼────────────────────────────────────────┼──────────────────────────────────┤
+  │ dist/         │ .app bundle（其实是个文件夹）          │ 双击就能运行                     │
+  └───────────────┴────────────────────────────────────────┴──────────────────────────────────┘
+  
+  关键概念四件套（Xcode 黑话，不懂会一脸懵）：
+  
+  - Workspace：可以包含多个 Project（多模块场景）。我们暂时不需要。
+  - Project：.xcodeproj，一个产品的所有源码+配置
+  - Target：一个具体的构建产物（App、Test、Widget 各一个 target）
+  - Scheme：一组"如何构建/运行/测试"的配置（Debug 用哪个 target、传哪些参数）
+
+  → 你绝大多数时间面对的是 一个 Project，一个 App Target，一两个 Scheme。
+
+# 项目结构（新建 SwiftUI macOS App 之后）
+  Radix/                          ← 仓库根目录
+  ├── Radix.xcodeproj/            ← Xcode 项目配置（二进制 plist）
+  ├── Radix/                      ← 源码目录
+  │   ├── RadixApp.swift          ← 入口（@main，相当于 main.ts）
+  │   ├── ContentView.swift       ← 第一个 View
+  │   ├── Assets.xcassets/        ← 图标 / 颜色 / 图片
+  │   │   ├── AppIcon.appiconset
+  │   │   └── AccentColor.colorset
+  │   ├── Info.plist              ← App 元信息（可能内联在 project，看版本）
+  │   └── Radix.entitlements      ← 权限声明（沙盒/网络/文件访问）
+  ├── RadixTests/                 ← 单元测试 target
+  └── RadixUITests/               ← UI 测试 target
+
+  重点理解：
+  - RadixApp.swift 里的 @main 是 Swift 5.3+ 的特性，等价于"程序入口"
+  - Assets.xcassets 是个"伪文件夹"——双击在 Xcode 里编辑，不要手动改里面的 JSON
+  - .entitlements 决定你 App 能干什么（联网？读硬盘？用 iCloud？）——沙盒环境下这非常重要
+
+# 调试
+  ┌──────────────┬───────────────────────────────────────┬───────────────────────────────────┐
+  │     工具     │                 用途                  │               类比                │
+  ├──────────────┼───────────────────────────────────────┼───────────────────────────────────┤
+  │ Breakpoint   │ 点行号左侧加断点                      │ 同 VSCode                         │
+  ├──────────────┼───────────────────────────────────────┼───────────────────────────────────┤
+  │ LLDB         │ 底层调试器，Console 里输入 po obj     │ 类似 gdb                          │
+  │              │ 打印对象                              │                                   │
+  ├──────────────┼───────────────────────────────────────┼───────────────────────────────────┤
+  │ View         │ ⌘ 暂停 → Debug View Hierarchy，3D     │ 类似浏览器 DevTools 的 Elements   │
+  │ Debugger     │ 拆解 UI                               │                                   │
+  ├──────────────┼───────────────────────────────────────┼───────────────────────────────────┤
+  │ Instruments  │ 性能/内存/泄漏分析                    │ 类似 Chrome DevTools 的           │
+  │              │                                       │ Performance tab                   │
+  ├──────────────┼───────────────────────────────────────┼───────────────────────────────────┤
+  │ print()      │ 永远的好朋友                          │ console.log                       │
+  └──────────────┴───────────────────────────────────────┴───────────────────────────────────┘
+
+# Apple 特有的概念（绕不开的几个）
+
+  1. Bundle Identifier
+
+  每个 App 的全球唯一 ID，反向域名风格：com.shieason.radix 这个一旦定下来，未来上架/iCloud/Keychain 同步都基于它，改起来代价大——开项目时就要想清楚。
+
+  2. App Sandbox（沙盒）
+
+  - macOS App 默认启用沙盒——你的 App 不能随便读硬盘、不能默认联网
+  - 在 Radix.entitlements 里勾选需要的能力：
+    - com.apple.security.network.client → 联网（调 Claude API 要这个）
+    - com.apple.security.files.user-selected.read-write → 用户主动选的文件
+    - com.apple.security.app-sandbox → 沙盒本身
+  - 不开沙盒也行（开发期），但要上 Mac App Store 必须开
+
+  3. Info.plist
+
+  App 的元信息（版本号、最低系统要求、必要权限的弹窗文案等）。新版 Xcode 把它内联到了 Project 设置里，不一定看到独立文件。
+
+  4. Code Signing
+  
+  所有 macOS App 都必须签名才能运行：
+  - 本地开发：Xcode 自动用你的 Apple ID 签个临时证书（免费），机器换了要重新签
+  - 分发给别人：需要付费 Developer Program（$99/年）拿 Developer ID 证书
+  - 不签名直接运行 → Gatekeeper 拦你 "无法验证开发者"
+```
+```sh
+# 一张图总结
+
+     编写代码 ───→ SwiftUI Preview ───→ Build & Run ───→ 调试
+     (VSCode/Xcode)   (Xcode 必备)        (⌘R)            (LLDB/View Debugger)
+                                            ↓
+                                         本地运行的 .app
+                                            ↓
+                                      (未来) Archive → 公证 → 分发
+
+  整个流程里 Apple 平台最特别的三件事：
+  1. SwiftUI Preview ——开发体验远超 web HMR，记得用
+  2. Code Signing ——所有 App 必须签名，免费账号本地够用
+  3. Sandbox + Entitlements ——能力要在 .entitlements 里显式声明，否则代码运行时静默失败
+```
+
 
 # Notes
 - macos 开发工具链
@@ -358,3 +468,10 @@ Unable to obtain a task name port right for pid 401: (os/kern) failure (0x5)
   - 在 Xcode 中新建项目, 从而生成 `Erudite.xcodeproj` 等文件
   - 项目目录结构: erudite/Erudite/Erudite.xcodeproj 的形式; vscode 编辑根目录; Xcode 打开project (`open /Users/frankshi/Projects/app/erudite/Erudite/Erudite.xcodeproj`)
   - swift -> xcode 的好处: 断点调试、Instruments 性能分析、代码签名、网络 entitlement（后续接 AI API）、正确的 .app bundle 分发。
+- Erudite 项目
+  - 工具:
+    - GRDB: [github](https://github.com/groue/GRDB.swift) Swift 生态下的 sqlite 工具
+    - FSRS (Free Spaced Repetition Scheduler) 模型 [墨墨背单词](https://memodocs.maimemo.com/docs/2022_KDD) 开源的 [group](https://github.com/open-spaced-repetition); [算法说明](https://github.com/open-spaced-repetition/awesome-fsrs/wiki/The-Algorithm)
+  - 词库:
+    - [dict](https://github.com/kajweb/dict/) -- 爬取自有道背单词
+    - [Qwerty Learner](https://github.com/RealKai42/qwerty-learner) 22k [web](https://qwerty.kaiyi.cool/)
