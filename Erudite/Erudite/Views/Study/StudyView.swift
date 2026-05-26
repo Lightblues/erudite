@@ -29,7 +29,7 @@ struct StudyView: View {
         }
         .task {
             if let db = appState.databaseService {
-                viewModel.start(database: db, mode: appState.studyMode)
+                viewModel.start(database: db, mode: appState.studyMode, bookId: appState.activeBookId)
             }
         }
         .onAppear {
@@ -146,11 +146,6 @@ struct StudyView: View {
                 // Tier badge + replay button
                 HStack(spacing: 8) {
                     tierBadge(word.frequency)
-                    if let list = word.listIndex, let unit = word.unitIndex {
-                        Text("List \(list) · Unit \(unit)")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
                     Spacer().frame(width: 8)
                     Button {
                         viewModel.replayPronunciation()

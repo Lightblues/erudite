@@ -19,11 +19,21 @@ struct TodayView: View {
             }
             .padding(.top, 40)
 
+            // Word Book Picker
+            if !appState.wordBooks.isEmpty {
+                bookPicker
+            }
+
             // Quick stats
             HStack(spacing: 32) {
-                StatBadge(title: "Total Words", value: "\(appState.wordCount)", icon: "character.book.closed", color: .purple)
-                StatBadge(title: "Due Today", value: "\(appState.dueCount)", icon: "arrow.clockwise", color: .orange)
-                StatBadge(title: "New", value: "\(appState.newCount)", icon: "plus.circle", color: .blue)
+                StatBadge(title: "Learned", value: "\(appState.learnedCount)", icon: "checkmark.circle", color: .green)
+                StatBadge(title: "Due", value: "\(appState.dueCount)", icon: "arrow.clockwise", color: .orange)
+                StatBadge(title: "Remaining", value: "\(appState.newCount)", icon: "plus.circle", color: .blue)
+            }
+
+            // Progress bar (for active book)
+            if let book = appState.activeBook {
+                bookProgress(book: book)
             }
 
             // Quick actions
@@ -75,6 +85,68 @@ struct TodayView: View {
         case 12..<17: return "afternoon"
         default: return "evening"
         }
+    }
+
+    private var bookPicker: some View {
+        @Bindable var state = appState
+        return HStack(spacing: 12) {
+            Image(systemName: "book.closed")
+                .foregroundStyle(.secondary)
+            Picker("Word Book", selection: Binding(
+                get: { appState.activeBookId },
+                set: { appState.selectBook($0) }
+            )) {
+                Text("All Books").tag(String?.none)
+                Divider()
+                ForEach(appState.wordBooks) { book in
+                    HStack {
+                        Text(book.name)
+                        if let exam = book.exam {
+                            Text("(\(exam))")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .tag(String?.some(book.id))
+                }
+            }
+            .frame(maxWidth: 300)
+        }
+        .padding(.horizontal)
+    }
+
+    private func bookProgress(book: WordBook) -> some View {
+        let total = book.wordCount
+        let learned = appState.learnedCount
+        let fraction = total > 0 ? Double(learned) / Double(total) : 0
+
+        return VStack(spacing: 6) {
+            HStack {
+                Text("\(book.name)")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                Spacer()
+                Text("\(learned) / \(total)")
+                    .font(.subheadline)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                Text("(\(Int(fraction * 100))%)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.green.opacity(0.15))
+                    Capsule()
+                        .fill(Color.green)
+                        .frame(width: max(geo.size.width * fraction, fraction > 0 ? 4 : 0))
+                }
+            }
+            .frame(height: 8)
+        }
+        .frame(maxWidth: 400)
+        .padding(.horizontal)
     }
 }
 
