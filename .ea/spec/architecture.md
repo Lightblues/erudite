@@ -2,10 +2,11 @@
 
 ## Stack
 
-- **Language:** Swift 5.9+
+- **Language:** Swift 5.0 (with Swift 6 concurrency features enabled)
 - **UI Framework:** SwiftUI
-- **Minimum OS:** macOS 14 (Sonoma)
-- **IDE:** Xcode 15+
+- **Minimum OS:** macOS 26.5
+- **IDE:** Xcode 26.5+
+- **Project Type:** Xcode native (.xcodeproj with PBXFileSystemSynchronizedRootGroup)
 - **Architecture Pattern:** MVVM + Repository
 - **Storage:** SQLite via GRDB.swift
 - **AI:** Claude API (primary), OpenAI (fallback)

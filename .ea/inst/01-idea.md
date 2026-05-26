@@ -1,5 +1,5 @@
 
-# GRE
+# Erudite
 ## discuss
 我在备考 GRE, 想要做一个帮助背单词的 APP, 一步步跟我讨论一下
 - GRE 的考试要求是什么? 有哪些官方材料? 官方单词列表有什么?
@@ -294,9 +294,14 @@ Unable to obtain a task name port right for pid 401: (os/kern) failure (0x5)
   └── MyAppTests/         ← 测试 target (可选)
 ```
 这种项目结构的话, 我在 vscode 中可以打开根目录; 那么在 Xcode 中应该打开 .xcodeproj 还是 根目录?
+// open /Users/frankshi/Projects/app/erudite/Erudite/Erudite.xcodeproj
 
+## spec
+将上面的讨论 (开发规范) 整理到 spec 中; 另外迁移到 Xcode 应该也可以形成一个 issue
 
-## branch 2
+生成项目 CLAUDE.md 文件, 概述项目基本目标 & 目录结构, 引用关键的 spec 文件
+
+## discuss branch 2
 产品方向: 我希望是 AI 原生的 -- 在背单词过程中我可以随时提问; AI 每天总结我的内容; 构建词根解析等能力
 技术架构: 倾向于采用 macos 原生
 ```sh
@@ -350,5 +355,6 @@ Unable to obtain a task name port right for pid 401: (os/kern) failure (0x5)
   - [Xcode](https://developer.apple.com/xcode)
   - [sf-symbols](https://developer.apple.com/sf-symbols/): 图标开发
 - 开发流程: 
-  - 在 Xcode 中新建项目, 从而升成 `Erudite.xcodeproj` 等文件
+  - 在 Xcode 中新建项目, 从而生成 `Erudite.xcodeproj` 等文件
+  - 项目目录结构: erudite/Erudite/Erudite.xcodeproj 的形式; vscode 编辑根目录; Xcode 打开project (`open /Users/frankshi/Projects/app/erudite/Erudite/Erudite.xcodeproj`)
   - swift -> xcode 的好处: 断点调试、Instruments 性能分析、代码签名、网络 entitlement（后续接 AI API）、正确的 .app bundle 分发。
