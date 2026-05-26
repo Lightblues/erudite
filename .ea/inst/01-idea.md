@@ -942,6 +942,25 @@ Today 页现在显示：
 存档进 done issue, 另外 FSRS, Quiz 模式 / SE 配对模式 / Speed Review 这些也创建 todo issue
 
 
+## build app (release)
+如何将 app 安装到本机? 这样就不用通过 Xcode 启动了.
+安装之后数据会丢失吗?
+// ~/Library/Application Support/Erudite/erudite.db
+在 Xcode 中如何 build?
+
+Build Configuration 之后, 下次按 "Run" 按钮运行的是 debug/release?
+```sh
+# 安装到 /Applications
+在 Xcode 里改一下 Build Configuration：
+- Product → Scheme → Edit Scheme (⌘<)
+- 左侧选 Run → Info → Build Configuration 改为 Release
+- ⌘B build
+然后：
+- Product → Show Build Folder in Finder（或 Xcode 菜单栏 Product → Reveal Build Products Folder）
+- 把 Release/Erudite.app 拖到 /Applications
+```
+
+
 # Notes
 [todo]
 - ai: 
@@ -966,6 +985,9 @@ Today 页现在显示：
   - 在 Xcode 中新建项目, 从而生成 `Erudite.xcodeproj` 等文件
   - 项目目录结构: erudite/Erudite/Erudite.xcodeproj 的形式; vscode 编辑根目录; Xcode 打开project (`open /Users/frankshi/Projects/app/erudite/Erudite/Erudite.xcodeproj`)
   - swift -> xcode 的好处: 断点调试、Instruments 性能分析、代码签名、网络 entitlement（后续接 AI API）、正确的 .app bundle 分发。
+  - build 方案: 区分 debug/release 版本, 后者没有断点调试等功能会小一点
+    - `Product → Archive`: '/Users/frankshi/Library/Developer/Xcode/Archives/2026-05-26/Erudite 5-26-26, 19.30.xcarchive'
+    - `Product → Build`: /Users/frankshi/Library/Developer/Xcode/DerivedData/Erudite-glnunjjzlfhhqpdgjdcoemndgjow/Build/Products/Release/Erudite.app
 - Erudite 项目
   - 工具:
     - GRDB: [github](https://github.com/groue/GRDB.swift) Swift 生态下的 sqlite 工具
