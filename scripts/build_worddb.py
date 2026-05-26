@@ -25,13 +25,14 @@ from typing import Optional
 
 # === Config ===
 
-DOWNLOADS = Path.home() / "Downloads"
-GRE3_PATH = DOWNLOADS / "GRE_3.json"
-GRE2_PATH = DOWNLOADS / "GRE_2.json"
-ZYY3000_PATH = DOWNLOADS / "GRE-CN-master/L-GRE-词汇/L-GRE-再要你命3000/L-GRE-再要你命3000顺序版/L-GRE-再要你命3000.csv"
-MAGOOSH_PATH = DOWNLOADS / "GRE-CN-master/L-GRE-词汇/L-GRE-Magoosh/L-GRE-MagooshFlashcard.csv"
+PROJECT_ROOT = Path(__file__).parent.parent
+DATA_RAW = PROJECT_ROOT / "data" / "raw"
+GRE3_PATH = DATA_RAW / "GRE_3.json"
+GRE2_PATH = DATA_RAW / "GRE_2.json"
+ZYY3000_PATH = DATA_RAW / "L-GRE-再要你命3000.csv"
+MAGOOSH_PATH = DATA_RAW / "L-GRE-MagooshFlashcard.csv"
 
-OUTPUT_PATH = Path(__file__).parent.parent / "Erudite/Erudite/Resources/Data/words.json"
+OUTPUT_PATH = PROJECT_ROOT / "Erudite/Erudite/Resources/Data/words.json"
 
 # Unit/List structure config
 WORDS_PER_UNIT = 10

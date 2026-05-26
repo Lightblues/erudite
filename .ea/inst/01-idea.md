@@ -680,7 +680,16 @@ subagent 为什么跑了这么久? 可以加速吗? (开发效率很重要)
 
 整理上面的实现为 issue
 
+
 # Notes
+[todo]
+- [ ] chatbot sidebar; daily review
+- [x] vocabulary?
+- [x] keybaord shortcuts
+- [ ] feat: dictionary
+- [ ] FSRS: 基础实现, 后续待优化
+
+[notes]
 - macos 开发工具链
   - [Xcode](https://developer.apple.com/xcode)
   - [sf-symbols](https://developer.apple.com/sf-symbols/): 图标开发
@@ -698,3 +707,8 @@ subagent 为什么跑了这么久? 可以加速吗? (开发效率很重要)
     - [Qwerty Learner](https://github.com/RealKai42/qwerty-learner) 22k [web](https://qwerty.kaiyi.cool/); 支持 vscode 插件, 也有在线版
       - 词库包括: GMAT, GRE, IELTS, SAT, TOEFL, CET-4, CET-6. e.g. [gre3000](https://github.com/RealKai42/qwerty-learner/blob/master/public/dicts/GRE3000_3_T.json) 但内容比较简单; 发音方案如何做的?
       - 同义词: [gre-equivalent](https://github.com/RealKai42/qwerty-learner/blob/master/public/dicts/GRE_equivalent.json) 
+- features
+  - FSRS: 核心记忆逻辑, @Erudite/Erudite/Engine/FSRS/FSRSEngine.swift
+    - ⚠️  当前是 stub，还没实现完整 FSRS-5
+  - keybaord shortcuts
+  - 自动语音播放
