@@ -5,6 +5,7 @@ import SwiftUI
 struct StudyView: View {
     @Environment(AppState.self) private var appState
     @State private var viewModel = StudyViewModel()
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         Group {
@@ -21,10 +22,82 @@ struct StudyView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
+        .focusable()
+        .focused($isFocused)
+        .onKeyPress { press in
+            handleKeyPress(press)
+        }
         .task {
             if let db = appState.databaseService {
                 viewModel.start(database: db, mode: appState.studyMode)
             }
+        }
+        .onAppear {
+            // Auto-focus so keyboard shortcuts work immediately
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                isFocused = true
+            }
+        }
+        .onChange(of: appState.selectedTab) {
+            // Re-focus when switching back to study tab
+            if appState.selectedTab == .study {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    isFocused = true
+                }
+            }
+        }
+    }
+
+    // MARK: - Key Handling
+
+    private func handleKeyPress(_ press: KeyPress) -> KeyPress.Result {
+        // Only handle keys during active study
+        guard viewModel.phase == .studying else { return .ignored }
+
+        switch press.key {
+        // Space: reveal → then rate Good on second press
+        case .space:
+            if !viewModel.isRevealed {
+                viewModel.reveal()
+            } else {
+                viewModel.rate(.good)
+            }
+            return .handled
+
+        // Rating: 1234 number keys + jkl;
+        case KeyEquivalent("1"), KeyEquivalent("j"):
+            if viewModel.isRevealed { viewModel.rate(.again) }
+            return .handled
+        case KeyEquivalent("2"), KeyEquivalent("k"):
+            if viewModel.isRevealed { viewModel.rate(.hard) }
+            return .handled
+        case KeyEquivalent("3"), KeyEquivalent("l"):
+            if viewModel.isRevealed { viewModel.rate(.good) }
+            return .handled
+        case KeyEquivalent("4"), KeyEquivalent(";"):
+            if viewModel.isRevealed { viewModel.rate(.easy) }
+            return .handled
+
+        // Navigation: skip / go back
+        case .rightArrow, KeyEquivalent("n"):
+            viewModel.skip()
+            return .handled
+        case .leftArrow, KeyEquivalent("p"):
+            viewModel.goBack()
+            return .handled
+
+        // Replay pronunciation
+        case KeyEquivalent("r"):
+            viewModel.replayPronunciation()
+            return .handled
+
+        // End session
+        case KeyEquivalent("q"), .escape:
+            viewModel.endSession()
+            return .handled
+
+        default:
+            return .ignored
         }
     }
 
@@ -49,7 +122,7 @@ struct StudyView: View {
                 ratingButtons
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             } else {
-                revealButton
+                revealHint
             }
         }
         .animation(.easeInOut(duration: 0.2), value: viewModel.isRevealed)
@@ -70,7 +143,7 @@ struct StudyView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                // Tier badge
+                // Tier badge + replay button
                 HStack(spacing: 8) {
                     tierBadge(word.frequency)
                     if let list = word.listIndex, let unit = word.unitIndex {
@@ -78,6 +151,16 @@ struct StudyView: View {
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     }
+                    Spacer().frame(width: 8)
+                    Button {
+                        viewModel.replayPronunciation()
+                    } label: {
+                        Image(systemName: "speaker.wave.2.fill")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.blue)
+                    .help("Replay pronunciation (R)")
                 }
             }
 
@@ -161,47 +244,80 @@ struct StudyView: View {
         .shadow(color: .black.opacity(0.05), radius: 8, y: 4)
     }
 
-    // MARK: - Reveal Button
+    // MARK: - Reveal Hint
 
-    private var revealButton: some View {
-        Button {
-            viewModel.reveal()
-        } label: {
-            Label("Show Answer", systemImage: "eye")
-                .font(.title3)
-                .frame(width: 200, height: 44)
+    private var revealHint: some View {
+        VStack(spacing: 6) {
+            Text("Press Space to reveal")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 16) {
+                shortcutHint("Space", label: "Reveal")
+                shortcutHint("→ n", label: "Skip")
+                shortcutHint("R", label: "Replay")
+                shortcutHint("Q", label: "Quit")
+            }
         }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.large)
-        .keyboardShortcut(.space, modifiers: [])
         .padding(.bottom, 32)
     }
 
     // MARK: - Rating Buttons
 
     private var ratingButtons: some View {
-        HStack(spacing: 12) {
-            ForEach(Rating.allCases, id: \.self) { rating in
-                Button {
-                    viewModel.rate(rating)
-                } label: {
-                    VStack(spacing: 4) {
-                        Image(systemName: rating.icon)
-                            .font(.title3)
-                        Text(rating.label)
-                            .font(.caption)
-                            .fontWeight(.medium)
-                        Text(viewModel.intervalLabel(for: rating))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(width: 80, height: 64)
-                }
-                .buttonStyle(.bordered)
-                .tint(ratingColor(rating))
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                ratingButton(.again, keys: "1 j", color: .red)
+                ratingButton(.hard, keys: "2 k", color: .orange)
+                ratingButton(.good, keys: "3 l", color: .green)
+                ratingButton(.easy, keys: "4 ;", color: .blue)
             }
+
+            // Shortcut legend
+            HStack(spacing: 16) {
+                shortcutHint("Space", label: "Good")
+                shortcutHint("← p", label: "Back")
+                shortcutHint("→ n", label: "Skip")
+                shortcutHint("R", label: "Replay")
+            }
+            .padding(.top, 4)
         }
-        .padding(.bottom, 32)
+        .padding(.bottom, 24)
+    }
+
+    private func ratingButton(_ rating: Rating, keys: String, color: Color) -> some View {
+        Button {
+            viewModel.rate(rating)
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: rating.icon)
+                    .font(.title3)
+                Text(rating.label)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                Text(viewModel.intervalLabel(for: rating))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(keys)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+            .frame(width: 80, height: 72)
+        }
+        .buttonStyle(.bordered)
+        .tint(color)
+    }
+
+    private func shortcutHint(_ key: String, label: String) -> some View {
+        HStack(spacing: 3) {
+            Text(key)
+                .font(.system(.caption2, design: .monospaced))
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 3))
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
     }
 
     // MARK: - Progress Header
@@ -315,15 +431,6 @@ struct StudyView: View {
         case .core: .red
         case .common: .blue
         case .advanced: .gray
-        }
-    }
-
-    private func ratingColor(_ rating: Rating) -> Color {
-        switch rating {
-        case .again: .red
-        case .hard: .orange
-        case .good: .green
-        case .easy: .blue
         }
     }
 

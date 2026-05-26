@@ -30,8 +30,10 @@ final class StudyViewModel {
 
     private var database: DatabaseService?
     private let engine = FSRSEngine()
+    private let pronunciation = PronunciationService()
     private var cardQueue: [ReviewCard] = []
     private var wordCache: [String: Word] = [:]
+    private var history: [(card: ReviewCard, word: Word?)] = [] // for go-back
 
     // MARK: - Public API
 
@@ -39,13 +41,15 @@ final class StudyViewModel {
         self.database = database
         self.sessionStartTime = Date()
         self.cardsStudied = 0
+        self.history = []
+        pronunciation.clearCache()
         loadQueue(mode: mode)
     }
 
     func reveal() {
-        guard let card = currentCard else { return }
+        guard currentCard != nil else { return }
         isRevealed = true
-        schedulingResult = engine.schedule(card: card)
+        schedulingResult = engine.schedule(card: currentCard!)
     }
 
     func rate(_ rating: Rating) {
@@ -77,6 +81,46 @@ final class StudyViewModel {
 
         cardsStudied += 1
         advanceToNext()
+    }
+
+    /// Replay pronunciation for current word
+    func replayPronunciation() {
+        guard let word = currentWord else { return }
+        pronunciation.speak(word.spelling)
+    }
+
+    /// Skip current card without rating (push to end of queue)
+    func skip() {
+        guard let card = currentCard else { return }
+        // Put it back at the end so it comes up again later
+        cardQueue.append(card)
+        advanceToNext()
+    }
+
+    /// Go back to previous card (view only, no re-rating)
+    func goBack() {
+        guard let prev = history.popLast() else { return }
+        // Save current card back to front of queue
+        if let card = currentCard {
+            cardQueue.insert(card, at: 0)
+        }
+        currentCard = prev.card
+        currentWord = prev.word
+        isRevealed = true  // Show it revealed so user can see the answer
+        schedulingResult = nil  // No re-rating allowed
+        cardsRemaining = cardQueue.count
+        phase = .studying
+
+        if let word = prev.word {
+            pronunciation.speak(word.spelling)
+        }
+    }
+
+    /// End the session early
+    func endSession() {
+        pronunciation.stop()
+        pronunciation.clearCache()
+        phase = .complete
     }
 
     // MARK: - Helpers
@@ -137,7 +181,13 @@ final class StudyViewModel {
     }
 
     private func advanceToNext() {
+        // Push current to history (for go-back)
+        if let card = currentCard {
+            history.append((card: card, word: currentWord))
+        }
+
         guard !cardQueue.isEmpty else {
+            pronunciation.stop()
             phase = .complete
             return
         }
@@ -149,6 +199,17 @@ final class StudyViewModel {
         schedulingResult = nil
         cardsRemaining = cardQueue.count
         phase = .studying
+
+        // Auto-pronounce the new word
+        if let word = currentWord {
+            pronunciation.speak(word.spelling)
+
+            // Prefetch next word's audio
+            if let nextCard = cardQueue.first,
+               let nextWord = wordCache[nextCard.wordId] {
+                pronunciation.prefetch(nextWord.spelling)
+            }
+        }
     }
 }
 
