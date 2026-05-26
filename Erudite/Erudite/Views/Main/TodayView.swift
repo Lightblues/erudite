@@ -33,10 +33,10 @@ struct TodayView: View {
             }
             .frame(maxWidth: 500)
 
-            // Quick stats placeholder
+            // Quick stats
             HStack(spacing: 32) {
+                StatBadge(title: "Total Words", value: "\(appState.wordCount)", icon: "character.book.closed")
                 StatBadge(title: "Due Today", value: "—", icon: "arrow.clockwise")
-                StatBadge(title: "New Words", value: "—", icon: "plus.circle")
                 StatBadge(title: "Streak", value: "—", icon: "flame")
             }
 

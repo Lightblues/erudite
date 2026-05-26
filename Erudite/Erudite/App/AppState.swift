@@ -5,6 +5,7 @@ import Observation
 final class AppState {
     var selectedTab: SidebarTab = .today
     var isDBReady: Bool = false
+    var wordCount: Int = 0
 
     private(set) var databaseService: DatabaseService?
 
@@ -12,7 +13,9 @@ final class AppState {
         do {
             let db = try DatabaseService()
             try db.setupSchema()
+            try await WordLoader.seedDatabaseIfNeeded(database: db)
             self.databaseService = db
+            self.wordCount = try db.fetchAllWords().count
             self.isDBReady = true
         } catch {
             print("Failed to initialize database: \(error)")

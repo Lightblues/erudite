@@ -17,11 +17,19 @@ struct WordLoader {
             case wordCount = "word_count"
             case words
         }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            version = try container.decode(String.self, forKey: .version)
+            generatedAt = try container.decode(String.self, forKey: .generatedAt)
+            wordCount = try container.decode(Int.self, forKey: .wordCount)
+            words = try container.decode([Word].self, forKey: .words)
+        }
     }
 
     /// Load words from the bundled words.json resource
     static func loadBundledWords() throws -> [Word] {
-        guard let url = Bundle.main.url(forResource: "words", withExtension: "json", subdirectory: "Data") else {
+        guard let url = Bundle.main.url(forResource: "words", withExtension: "json") else {
             throw WordLoaderError.fileNotFound
         }
 

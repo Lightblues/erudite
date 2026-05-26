@@ -15,6 +15,8 @@ struct Word: Identifiable, Codable, Hashable {
     let examples: [Example]
     let mnemonics: [String]
     let tags: [String]
+    let listIndex: Int?
+    let unitIndex: Int?
 
     init(
         id: String,
@@ -28,7 +30,9 @@ struct Word: Identifiable, Codable, Hashable {
         frequency: FrequencyTier = .common,
         examples: [Example] = [],
         mnemonics: [String] = [],
-        tags: [String] = []
+        tags: [String] = [],
+        listIndex: Int? = nil,
+        unitIndex: Int? = nil
     ) {
         self.id = id
         self.spelling = spelling
@@ -42,19 +46,17 @@ struct Word: Identifiable, Codable, Hashable {
         self.examples = examples
         self.mnemonics = mnemonics
         self.tags = tags
+        self.listIndex = listIndex
+        self.unitIndex = unitIndex
     }
 }
 
 // MARK: - Definition
 
 struct Definition: Codable, Hashable {
-    let partOfSpeech: PartOfSpeech
+    let partOfSpeech: String
     let english: String
     let chinese: String
-}
-
-enum PartOfSpeech: String, Codable, Hashable {
-    case noun, verb, adj, adv, prep, conj
 }
 
 // MARK: - Morpheme / Word Root
@@ -80,14 +82,7 @@ enum MorphemeType: String, Codable, Hashable {
 
 struct Example: Codable, Hashable {
     let sentence: String
-    let source: ExampleSource
-}
-
-enum ExampleSource: String, Codable, Hashable {
-    case officialGuide
-    case powerPrep
-    case generated
-    case custom
+    let source: String
 }
 
 // MARK: - Enums
