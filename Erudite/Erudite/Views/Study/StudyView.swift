@@ -27,6 +27,7 @@ struct StudyView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
         .focusable()
+        .focusEffectDisabled()
         .focused($isFocused)
         .onKeyPress { press in
             handleKeyPress(press)

@@ -31,6 +31,7 @@ struct TypingView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .focusable()
+        .focusEffectDisabled()
         .focused($isFocused)
         .onKeyPress(phases: .down) { press in
             handleKeyPress(press)
@@ -38,6 +39,14 @@ struct TypingView: View {
         .onAppear { isFocused = true }
         .onChange(of: appState.selectedTab) {
             if appState.selectedTab == .typing {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    isFocused = true
+                }
+            }
+        }
+        .onChange(of: showWordList) {
+            // Re-focus after popover closes
+            if !showWordList {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     isFocused = true
                 }
@@ -366,6 +375,9 @@ struct TypingView: View {
                     Button {
                         viewModel.goToWord(at: index)
                         showWordList = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            isFocused = true
+                        }
                     } label: {
                         HStack {
                             Text("\(index + 1)")
