@@ -277,6 +277,53 @@ nonisolated(unsafe) final class DatabaseService: Sendable {
         }
     }
 
+    func fetchAllCards() throws -> [ReviewCard] {
+        try dbQueue.read { db in
+            let rows = try Row.fetchAll(db, sql: "SELECT * FROM reviewCard")
+            return rows.map { self.rowToCard($0) }
+        }
+    }
+
+    func fetchAllReviewLogs() throws -> [ReviewLog] {
+        try dbQueue.read { db in
+            let rows = try Row.fetchAll(db, sql: "SELECT * FROM reviewLog ORDER BY timestamp DESC")
+            return rows.map { row in
+                ReviewLog(
+                    id: row["id"],
+                    cardId: UUID(uuidString: row["cardId"] as String) ?? UUID(),
+                    rating: Rating(rawValue: row["rating"] as Int) ?? .good,
+                    state: CardState(rawValue: row["state"] as Int) ?? .new,
+                    timestamp: row["timestamp"],
+                    elapsedDays: row["elapsedDays"],
+                    scheduledDays: row["scheduledDays"],
+                    reviewDuration: row["reviewDuration"]
+                )
+            }
+        }
+    }
+
+    func fetchReviewLogs(since date: Date) throws -> [ReviewLog] {
+        try dbQueue.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT * FROM reviewLog WHERE timestamp >= ? ORDER BY timestamp DESC",
+                arguments: [date]
+            )
+            return rows.map { row in
+                ReviewLog(
+                    id: row["id"],
+                    cardId: UUID(uuidString: row["cardId"] as String) ?? UUID(),
+                    rating: Rating(rawValue: row["rating"] as Int) ?? .good,
+                    state: CardState(rawValue: row["state"] as Int) ?? .new,
+                    timestamp: row["timestamp"],
+                    elapsedDays: row["elapsedDays"],
+                    scheduledDays: row["scheduledDays"],
+                    reviewDuration: row["reviewDuration"]
+                )
+            }
+        }
+    }
+
     func fetchDueCount(now: Date = Date(), inBook bookId: String? = nil) throws -> Int {
         try dbQueue.read { db in
             if let bookId {
@@ -313,6 +360,24 @@ nonisolated(unsafe) final class DatabaseService: Sendable {
                 ) ?? 0
             } else {
                 return try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM reviewCard WHERE state = 0") ?? 0
+            }
+        }
+    }
+
+    func fetchLearnedCount(inBook bookId: String? = nil) throws -> Int {
+        try dbQueue.read { db in
+            if let bookId {
+                return try Int.fetchOne(
+                    db,
+                    sql: """
+                        SELECT COUNT(*) FROM reviewCard rc
+                        JOIN wordListEntry wle ON wle.wordId = rc.wordId
+                        WHERE wle.listId = ? AND rc.state != 0
+                        """,
+                    arguments: [bookId]
+                ) ?? 0
+            } else {
+                return try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM reviewCard WHERE state != 0") ?? 0
             }
         }
     }

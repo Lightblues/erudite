@@ -26,9 +26,14 @@ struct TodayView: View {
 
             // Quick stats
             HStack(spacing: 32) {
-                StatBadge(title: "Total", value: "\(appState.activeBook?.wordCount ?? appState.wordCount)", icon: "character.book.closed", color: .purple)
+                StatBadge(title: "Learned", value: "\(appState.learnedCount)", icon: "checkmark.circle", color: .green)
                 StatBadge(title: "Due", value: "\(appState.dueCount)", icon: "arrow.clockwise", color: .orange)
-                StatBadge(title: "New", value: "\(appState.newCount)", icon: "plus.circle", color: .blue)
+                StatBadge(title: "Remaining", value: "\(appState.newCount)", icon: "plus.circle", color: .blue)
+            }
+
+            // Progress bar (for active book)
+            if let book = appState.activeBook {
+                bookProgress(book: book)
             }
 
             // Quick actions
@@ -106,6 +111,41 @@ struct TodayView: View {
             }
             .frame(maxWidth: 300)
         }
+        .padding(.horizontal)
+    }
+
+    private func bookProgress(book: WordBook) -> some View {
+        let total = book.wordCount
+        let learned = appState.learnedCount
+        let fraction = total > 0 ? Double(learned) / Double(total) : 0
+
+        return VStack(spacing: 6) {
+            HStack {
+                Text("\(book.name)")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                Spacer()
+                Text("\(learned) / \(total)")
+                    .font(.subheadline)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                Text("(\(Int(fraction * 100))%)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.green.opacity(0.15))
+                    Capsule()
+                        .fill(Color.green)
+                        .frame(width: max(geo.size.width * fraction, fraction > 0 ? 4 : 0))
+                }
+            }
+            .frame(height: 8)
+        }
+        .frame(maxWidth: 400)
         .padding(.horizontal)
     }
 }
