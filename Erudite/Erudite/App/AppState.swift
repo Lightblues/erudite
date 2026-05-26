@@ -10,6 +10,14 @@ final class AppState {
     var newCount: Int = 0
     var studyMode: StudyQueueMode = .mixed
 
+    // Multi-wordbook
+    var wordBooks: [WordBook] = []
+    var activeBookId: String? = nil  // nil = global (all books)
+
+    var activeBook: WordBook? {
+        wordBooks.first { $0.id == activeBookId }
+    }
+
     private(set) var databaseService: DatabaseService?
 
     func initialize() async {
@@ -19,6 +27,7 @@ final class AppState {
             try await WordLoader.seedDatabaseIfNeeded(database: db)
             self.databaseService = db
             self.wordCount = try db.fetchAllWords().count
+            self.wordBooks = try db.fetchWordBooks()
             self.isDBReady = true
             refreshStats()
         } catch {
@@ -29,11 +38,16 @@ final class AppState {
     func refreshStats() {
         guard let db = databaseService else { return }
         do {
-            dueCount = try db.fetchDueCount()
-            newCount = try db.fetchNewCount()
+            dueCount = try db.fetchDueCount(inBook: activeBookId)
+            newCount = try db.fetchNewCount(inBook: activeBookId)
         } catch {
             print("Failed to refresh stats: \(error)")
         }
+    }
+
+    func selectBook(_ bookId: String?) {
+        activeBookId = bookId
+        refreshStats()
     }
 
     func startStudy(mode: StudyQueueMode = .mixed) {

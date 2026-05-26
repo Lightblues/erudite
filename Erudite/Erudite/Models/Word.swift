@@ -15,8 +15,6 @@ struct Word: Identifiable, Codable, Hashable {
     let examples: [Example]
     let mnemonics: [String]
     let tags: [String]
-    let listIndex: Int?
-    let unitIndex: Int?
 
     init(
         id: String,
@@ -30,9 +28,7 @@ struct Word: Identifiable, Codable, Hashable {
         frequency: FrequencyTier = .common,
         examples: [Example] = [],
         mnemonics: [String] = [],
-        tags: [String] = [],
-        listIndex: Int? = nil,
-        unitIndex: Int? = nil
+        tags: [String] = []
     ) {
         self.id = id
         self.spelling = spelling
@@ -46,8 +42,6 @@ struct Word: Identifiable, Codable, Hashable {
         self.examples = examples
         self.mnemonics = mnemonics
         self.tags = tags
-        self.listIndex = listIndex
-        self.unitIndex = unitIndex
     }
 }
 

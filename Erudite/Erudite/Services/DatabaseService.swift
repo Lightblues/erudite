@@ -153,6 +153,22 @@ nonisolated(unsafe) final class DatabaseService: Sendable {
         }
     }
 
+    func fetchWords(inBook bookId: String) throws -> [Word] {
+        let decoder = JSONDecoder()
+        return try dbQueue.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT w.data FROM word w
+                JOIN wordListEntry wle ON wle.wordId = w.id
+                WHERE wle.listId = ?
+                ORDER BY wle.sortOrder
+                """, arguments: [bookId])
+            return rows.compactMap { row in
+                guard let data = row["data"] as? Data else { return nil }
+                return try? decoder.decode(Word.self, from: data)
+            }
+        }
+    }
+
     func fetchWord(id: String) throws -> Word? {
         let decoder = JSONDecoder()
         return try dbQueue.read { db in
@@ -217,28 +233,6 @@ nonisolated(unsafe) final class DatabaseService: Sendable {
         }
     }
 
-    func fetchDueCards(now: Date = Date()) throws -> [ReviewCard] {
-        try dbQueue.read { db in
-            let rows = try Row.fetchAll(
-                db,
-                sql: "SELECT * FROM reviewCard WHERE state != 0 AND dueDate <= ? ORDER BY dueDate",
-                arguments: [now]
-            )
-            return rows.map { rowToCard($0) }
-        }
-    }
-
-    func fetchNewCards(limit: Int = 10) throws -> [ReviewCard] {
-        try dbQueue.read { db in
-            let rows = try Row.fetchAll(
-                db,
-                sql: "SELECT * FROM reviewCard WHERE state = 0 LIMIT ?",
-                arguments: [limit]
-            )
-            return rows.map { rowToCard($0) }
-        }
-    }
-
     func updateCard(_ card: ReviewCard) throws {
         try dbQueue.write { db in
             try db.execute(
@@ -283,19 +277,132 @@ nonisolated(unsafe) final class DatabaseService: Sendable {
         }
     }
 
-    func fetchDueCount(now: Date = Date()) throws -> Int {
+    func fetchDueCount(now: Date = Date(), inBook bookId: String? = nil) throws -> Int {
         try dbQueue.read { db in
-            try Int.fetchOne(
-                db,
-                sql: "SELECT COUNT(*) FROM reviewCard WHERE state != 0 AND dueDate <= ?",
-                arguments: [now]
-            ) ?? 0
+            if let bookId {
+                return try Int.fetchOne(
+                    db,
+                    sql: """
+                        SELECT COUNT(*) FROM reviewCard rc
+                        JOIN wordListEntry wle ON wle.wordId = rc.wordId
+                        WHERE wle.listId = ? AND rc.state != 0 AND rc.dueDate <= ?
+                        """,
+                    arguments: [bookId, now]
+                ) ?? 0
+            } else {
+                return try Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM reviewCard WHERE state != 0 AND dueDate <= ?",
+                    arguments: [now]
+                ) ?? 0
+            }
         }
     }
 
-    func fetchNewCount() throws -> Int {
+    func fetchNewCount(inBook bookId: String? = nil) throws -> Int {
         try dbQueue.read { db in
-            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM reviewCard WHERE state = 0") ?? 0
+            if let bookId {
+                return try Int.fetchOne(
+                    db,
+                    sql: """
+                        SELECT COUNT(*) FROM reviewCard rc
+                        JOIN wordListEntry wle ON wle.wordId = rc.wordId
+                        WHERE wle.listId = ? AND rc.state = 0
+                        """,
+                    arguments: [bookId]
+                ) ?? 0
+            } else {
+                return try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM reviewCard WHERE state = 0") ?? 0
+            }
+        }
+    }
+
+    func fetchDueCards(now: Date = Date(), inBook bookId: String? = nil) throws -> [ReviewCard] {
+        try dbQueue.read { db in
+            let sql: String
+            let args: StatementArguments
+            if let bookId {
+                sql = """
+                    SELECT rc.* FROM reviewCard rc
+                    JOIN wordListEntry wle ON wle.wordId = rc.wordId
+                    WHERE wle.listId = ? AND rc.state != 0 AND rc.dueDate <= ?
+                    ORDER BY rc.dueDate
+                    """
+                args = [bookId, now]
+            } else {
+                sql = "SELECT * FROM reviewCard WHERE state != 0 AND dueDate <= ? ORDER BY dueDate"
+                args = [now]
+            }
+            let rows = try Row.fetchAll(db, sql: sql, arguments: args)
+            return rows.map { self.rowToCard($0) }
+        }
+    }
+
+    func fetchNewCards(limit: Int = 10, inBook bookId: String? = nil) throws -> [ReviewCard] {
+        try dbQueue.read { db in
+            let sql: String
+            let args: StatementArguments
+            if let bookId {
+                sql = """
+                    SELECT rc.* FROM reviewCard rc
+                    JOIN wordListEntry wle ON wle.wordId = rc.wordId
+                    WHERE wle.listId = ? AND rc.state = 0
+                    ORDER BY wle.sortOrder
+                    LIMIT ?
+                    """
+                args = [bookId, limit]
+            } else {
+                sql = "SELECT * FROM reviewCard WHERE state = 0 LIMIT ?"
+                args = [limit]
+            }
+            let rows = try Row.fetchAll(db, sql: sql, arguments: args)
+            return rows.map { self.rowToCard($0) }
+        }
+    }
+
+    // MARK: - WordBook Operations
+
+    func insertWordBook(_ book: WordBook) throws {
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                    INSERT OR IGNORE INTO wordList (id, name, description, isBuiltin, createdAt)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                arguments: [book.id, book.name, book.description, book.isBuiltin, book.createdAt]
+            )
+        }
+    }
+
+    func fetchWordBooks() throws -> [WordBook] {
+        try dbQueue.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT wl.*, COUNT(wle.wordId) as wordCount
+                FROM wordList wl
+                LEFT JOIN wordListEntry wle ON wle.listId = wl.id
+                GROUP BY wl.id
+                ORDER BY wl.name
+                """)
+            return rows.map { row in
+                WordBook(
+                    id: row["id"],
+                    name: row["name"],
+                    description: row["description"],
+                    wordCount: row["wordCount"],
+                    isBuiltin: row["isBuiltin"]
+                )
+            }
+        }
+    }
+
+    func insertWordBookEntries(bookId: String, wordIds: [String]) throws {
+        try dbQueue.write { db in
+            for (index, wordId) in wordIds.enumerated() {
+                try db.execute(
+                    sql: "INSERT OR IGNORE INTO wordListEntry (listId, wordId, sortOrder) VALUES (?, ?, ?)",
+                    arguments: [bookId, wordId, index]
+                )
+            }
         }
     }
 

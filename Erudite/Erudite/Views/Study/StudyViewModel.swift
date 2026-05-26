@@ -34,11 +34,13 @@ final class StudyViewModel {
     private var cardQueue: [ReviewCard] = []
     private var wordCache: [String: Word] = [:]
     private var history: [(card: ReviewCard, word: Word?)] = [] // for go-back
+    private var bookId: String? = nil
 
     // MARK: - Public API
 
-    func start(database: DatabaseService, mode: StudyQueueMode = .mixed) {
+    func start(database: DatabaseService, mode: StudyQueueMode = .mixed, bookId: String? = nil) {
         self.database = database
+        self.bookId = bookId
         self.sessionStartTime = Date()
         self.cardsStudied = 0
         self.history = []
@@ -152,13 +154,13 @@ final class StudyViewModel {
 
             switch mode {
             case .mixed:
-                let due = try db.fetchDueCards()
-                let new = try db.fetchNewCards(limit: 10)
+                let due = try db.fetchDueCards(inBook: bookId)
+                let new = try db.fetchNewCards(limit: 10, inBook: bookId)
                 cards = due + new
             case .reviewOnly:
-                cards = try db.fetchDueCards()
+                cards = try db.fetchDueCards(inBook: bookId)
             case .newOnly:
-                cards = try db.fetchNewCards(limit: 20)
+                cards = try db.fetchNewCards(limit: 20, inBook: bookId)
             }
 
             guard !cards.isEmpty else {

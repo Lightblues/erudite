@@ -19,10 +19,15 @@ struct TodayView: View {
             }
             .padding(.top, 40)
 
+            // Word Book Picker
+            if !appState.wordBooks.isEmpty {
+                bookPicker
+            }
+
             // Quick stats
             HStack(spacing: 32) {
-                StatBadge(title: "Total Words", value: "\(appState.wordCount)", icon: "character.book.closed", color: .purple)
-                StatBadge(title: "Due Today", value: "\(appState.dueCount)", icon: "arrow.clockwise", color: .orange)
+                StatBadge(title: "Total", value: "\(appState.activeBook?.wordCount ?? appState.wordCount)", icon: "character.book.closed", color: .purple)
+                StatBadge(title: "Due", value: "\(appState.dueCount)", icon: "arrow.clockwise", color: .orange)
                 StatBadge(title: "New", value: "\(appState.newCount)", icon: "plus.circle", color: .blue)
             }
 
@@ -75,6 +80,33 @@ struct TodayView: View {
         case 12..<17: return "afternoon"
         default: return "evening"
         }
+    }
+
+    private var bookPicker: some View {
+        @Bindable var state = appState
+        return HStack(spacing: 12) {
+            Image(systemName: "book.closed")
+                .foregroundStyle(.secondary)
+            Picker("Word Book", selection: Binding(
+                get: { appState.activeBookId },
+                set: { appState.selectBook($0) }
+            )) {
+                Text("All Books").tag(String?.none)
+                Divider()
+                ForEach(appState.wordBooks) { book in
+                    HStack {
+                        Text(book.name)
+                        if let exam = book.exam {
+                            Text("(\(exam))")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .tag(String?.some(book.id))
+                }
+            }
+            .frame(maxWidth: 300)
+        }
+        .padding(.horizontal)
     }
 }
 

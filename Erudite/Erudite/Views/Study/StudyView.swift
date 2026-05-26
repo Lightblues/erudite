@@ -29,7 +29,7 @@ struct StudyView: View {
         }
         .task {
             if let db = appState.databaseService {
-                viewModel.start(database: db, mode: appState.studyMode)
+                viewModel.start(database: db, mode: appState.studyMode, bookId: appState.activeBookId)
             }
         }
         .onAppear {

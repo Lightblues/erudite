@@ -7,6 +7,7 @@ struct LibraryView: View {
     @State private var searchText = ""
     @State private var words: [Word] = []
     @State private var selectedTier: FrequencyTier? = nil
+    @State private var selectedBookId: String? = nil
 
     private var filteredWords: [Word] {
         var result = words
@@ -34,6 +35,20 @@ struct LibraryView: View {
                     .fontWeight(.bold)
 
                 Spacer()
+
+                // Book filter
+                if !appState.wordBooks.isEmpty {
+                    Picker("Book", selection: $selectedBookId) {
+                        Text("All Books").tag(String?.none)
+                        ForEach(appState.wordBooks) { book in
+                            Text(book.name).tag(String?.some(book.id))
+                        }
+                    }
+                    .frame(maxWidth: 200)
+                    .onChange(of: selectedBookId) {
+                        Task { await loadWords() }
+                    }
+                }
 
                 // Tier filter
                 Picker("Tier", selection: $selectedTier) {
@@ -86,7 +101,11 @@ struct LibraryView: View {
     private func loadWords() async {
         guard let db = appState.databaseService else { return }
         do {
-            words = try db.fetchAllWords()
+            if let bookId = selectedBookId {
+                words = try db.fetchWords(inBook: bookId)
+            } else {
+                words = try db.fetchAllWords()
+            }
         } catch {
             print("Failed to load words: \(error)")
         }
