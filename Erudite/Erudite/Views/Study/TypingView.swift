@@ -123,82 +123,94 @@ struct TypingView: View {
     // MARK: - Header
 
     private var headerBar: some View {
-        HStack {
-            Text("Ch \(viewModel.chapterIndex + 1)/\(viewModel.totalChapters)")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+        VStack(spacing: 8) {
+            // Top row: chapter info + exit
+            HStack {
+                Text("Ch \(viewModel.chapterIndex + 1)/\(viewModel.totalChapters)")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
 
-            Spacer()
+                Spacer()
 
-            Text(viewModel.chapterProgress)
-                .font(.subheadline).monospacedDigit()
-                .foregroundStyle(.secondary)
+                Text(viewModel.chapterProgress)
+                    .font(.subheadline).monospacedDigit()
+                    .foregroundStyle(.secondary)
 
-            Spacer()
+                Spacer()
+
+                Button { appState.selectedTab = .today } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+            }
 
             // Settings row
-            HStack(spacing: 10) {
+            HStack(spacing: 16) {
                 // Accent
-                Picker("Accent", selection: Binding(
-                    get: { viewModel.accent },
-                    set: { viewModel.accent = $0 }
-                )) {
-                    ForEach(TypingViewModel.Accent.allCases, id: \.self) { a in
-                        Text(a.label).tag(a)
+                HStack(spacing: 4) {
+                    Text("Accent").font(.caption).foregroundStyle(.secondary)
+                    Picker("", selection: Binding(
+                        get: { viewModel.accent },
+                        set: { viewModel.accent = $0 }
+                    )) {
+                        ForEach(TypingViewModel.Accent.allCases, id: \.self) { a in
+                            Text(a.label).tag(a)
+                        }
                     }
+                    .fixedSize()
                 }
-                .frame(maxWidth: 70)
 
-                // Hide mode
-                Picker("Display", selection: Binding(
-                    get: { viewModel.hideMode },
-                    set: { viewModel.hideMode = $0 }
-                )) {
-                    ForEach(TypingViewModel.HideMode.allCases, id: \.self) { mode in
-                        Text(mode.label).tag(mode)
+                // Display mode
+                HStack(spacing: 4) {
+                    Text("Display").font(.caption).foregroundStyle(.secondary)
+                    Picker("", selection: Binding(
+                        get: { viewModel.hideMode },
+                        set: { viewModel.hideMode = $0 }
+                    )) {
+                        ForEach(TypingViewModel.HideMode.allCases, id: \.self) { mode in
+                            Text(mode.label).tag(mode)
+                        }
                     }
+                    .fixedSize()
                 }
-                .frame(maxWidth: 130)
 
                 // Error mode
-                Picker("On Error", selection: Binding(
-                    get: { viewModel.errorMode },
-                    set: { viewModel.errorMode = $0 }
-                )) {
-                    ForEach(TypingViewModel.ErrorMode.allCases, id: \.self) { mode in
-                        Text(mode.label).tag(mode)
+                HStack(spacing: 4) {
+                    Text("Error").font(.caption).foregroundStyle(.secondary)
+                    Picker("", selection: Binding(
+                        get: { viewModel.errorMode },
+                        set: { viewModel.errorMode = $0 }
+                    )) {
+                        ForEach(TypingViewModel.ErrorMode.allCases, id: \.self) { mode in
+                            Text(mode.label).tag(mode)
+                        }
                     }
+                    .fixedSize()
                 }
-                .frame(maxWidth: 110)
 
                 // Word order
-                Picker("Order", selection: Binding(
-                    get: { viewModel.wordOrder },
-                    set: { viewModel.wordOrder = $0 }
-                )) {
-                    ForEach(TypingViewModel.WordOrder.allCases, id: \.self) { order in
-                        Text(order.label).tag(order)
+                HStack(spacing: 4) {
+                    Text("Order").font(.caption).foregroundStyle(.secondary)
+                    Picker("", selection: Binding(
+                        get: { viewModel.wordOrder },
+                        set: { viewModel.wordOrder = $0 }
+                    )) {
+                        ForEach(TypingViewModel.WordOrder.allCases, id: \.self) { order in
+                            Text(order.label).tag(order)
+                        }
                     }
+                    .fixedSize()
                 }
-                .frame(maxWidth: 110)
 
                 // Loop pronunciation
                 Toggle(isOn: Binding(
                     get: { viewModel.loopPronunciation },
                     set: { _ in viewModel.toggleLoopPronunciation() }
                 )) {
-                    Text("Loop")
-                        .font(.caption)
+                    Text("Loop Audio").font(.caption)
                 }
                 .toggleStyle(.checkbox)
             }
-
-            Spacer()
-
-            Button { appState.selectedTab = .today } label: {
-                Image(systemName: "xmark")
-            }
-            .buttonStyle(.borderless)
         }
     }
 

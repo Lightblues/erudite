@@ -188,15 +188,34 @@ final class TypingViewModel {
     private let pronunciation = PronunciationService()
     private var loopTimer: Timer?
 
-    // Sound effects: use NSSound(named:) inline — sandbox-safe
+    // Sound effects: pre-loaded for rapid playback
+    private let correctSound: NSSound? = {
+        let s = NSSound(named: "Tink")
+        s?.volume = 0.6
+        return s
+    }()
+    private let wrongSound: NSSound? = {
+        let s = NSSound(named: "Basso")
+        s?.volume = 0.8
+        return s
+    }()
+    private let completeSound: NSSound? = {
+        let s = NSSound(named: "Glass")
+        s?.volume = 1.0
+        return s
+    }()
+
     private func playCorrect() {
-        NSSound(named: "Tink")?.play()
+        correctSound?.stop()
+        correctSound?.play()
     }
     private func playWrong() {
-        NSSound(named: "Basso")?.play()
+        wrongSound?.stop()
+        wrongSound?.play()
     }
     private func playComplete() {
-        NSSound(named: "Glass")?.play()
+        completeSound?.stop()
+        completeSound?.play()
     }
 
     // MARK: - Progress persistence key
