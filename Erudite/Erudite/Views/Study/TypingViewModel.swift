@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import AudioToolbox
 import Observation
 
 // MARK: - Typing Practice ViewModel
@@ -105,8 +106,9 @@ final class TypingViewModel {
     var totalCorrect: Int = 0
     var totalMistakes: Int = 0
     var wordsCompleted: Int = 0
-    var sessionStartTime: Date?
+    var accumulatedTime: TimeInterval = 0  // time spent typing (paused excluded)
     var wordStartTime: Date?
+    private var activeStartTime: Date?     // when current typing phase started
 
     // Per-word results for chapter summary
     var wordResults: [(word: Word, mistakes: Int, duration: TimeInterval)] = []
@@ -141,13 +143,13 @@ final class TypingViewModel {
     }
 
     var elapsedTime: TimeInterval {
-        sessionStartTime.map { Date().timeIntervalSince($0) } ?? 0
+        let liveExtra = activeStartTime.map { Date().timeIntervalSince($0) } ?? 0
+        return accumulatedTime + liveExtra
     }
 
     var wpm: Double {
         let minutes = elapsedTime / 60.0
         guard minutes > 0 else { return 0 }
-        // WPM = total characters typed correctly / 5 / minutes
         return Double(totalCorrect) / 5.0 / minutes
     }
 
@@ -158,10 +160,32 @@ final class TypingViewModel {
     private let pronunciation = PronunciationService()
     private var loopTimer: Timer?
 
-    // Sound effects
-    private let correctSound = NSSound(named: "Tink")
-    private let wrongSound = NSSound(named: "Basso")
-    private let completeSound = NSSound(named: "Glass")
+    // Sound effects (SystemSoundID for immediate playback)
+    private var correctSoundID: SystemSoundID = 0
+    private var wrongSoundID: SystemSoundID = 0
+    private var completeSoundID: SystemSoundID = 0
+
+    private func loadSounds() {
+        // Load system sounds by file path (guaranteed to exist on macOS)
+        let tinkURL = URL(fileURLWithPath: "/System/Library/Sounds/Tink.aiff")
+        AudioServicesCreateSystemSoundID(tinkURL as CFURL, &correctSoundID)
+
+        let bassoURL = URL(fileURLWithPath: "/System/Library/Sounds/Basso.aiff")
+        AudioServicesCreateSystemSoundID(bassoURL as CFURL, &wrongSoundID)
+
+        let glassURL = URL(fileURLWithPath: "/System/Library/Sounds/Glass.aiff")
+        AudioServicesCreateSystemSoundID(glassURL as CFURL, &completeSoundID)
+    }
+
+    private func playCorrect() {
+        if correctSoundID != 0 { AudioServicesPlaySystemSound(correctSoundID) }
+    }
+    private func playWrong() {
+        if wrongSoundID != 0 { AudioServicesPlaySystemSound(wrongSoundID) }
+    }
+    private func playComplete() {
+        if completeSoundID != 0 { AudioServicesPlaySystemSound(completeSoundID) }
+    }
 
     // MARK: - Progress persistence key
     private var progressKey: String {
@@ -174,6 +198,7 @@ final class TypingViewModel {
         self.hideMode = HideMode(rawValue: UserDefaults.standard.string(forKey: "typing_hideMode") ?? "") ?? .none
         self.errorMode = ErrorMode(rawValue: UserDefaults.standard.string(forKey: "typing_errorMode") ?? "") ?? .retryChar
         self.loopPronunciation = UserDefaults.standard.bool(forKey: "typing_loopPronunciation")
+        loadSounds()
     }
 
     // MARK: - Public API
@@ -192,7 +217,7 @@ final class TypingViewModel {
     func activate() {
         guard phase == .idle else { return }
         phase = .typing
-        sessionStartTime = sessionStartTime ?? Date()
+        activeStartTime = Date()
         wordStartTime = Date()
         if let word = currentWord {
             pronunciation.speak(word.spelling)
@@ -203,6 +228,11 @@ final class TypingViewModel {
     /// Called on Esc or window blur → pause to idle
     func deactivate() {
         guard phase == .typing else { return }
+        // Accumulate time spent in this active session
+        if let start = activeStartTime {
+            accumulatedTime += Date().timeIntervalSince(start)
+        }
+        activeStartTime = nil
         phase = .idle
         stopLoop()
     }
@@ -223,7 +253,7 @@ final class TypingViewModel {
             letterStates[cursorPosition] = .correct
             cursorPosition += 1
             totalCorrect += 1
-            correctSound?.play()
+            playCorrect()
 
             if cursorPosition >= targetChars.count {
                 wordComplete()
@@ -233,7 +263,7 @@ final class TypingViewModel {
             letterStates[cursorPosition] = .wrong
             wordMistakes += 1
             totalMistakes += 1
-            wrongSound?.play()
+            playWrong()
 
             switch errorMode {
             case .retryChar:
@@ -348,7 +378,8 @@ final class TypingViewModel {
                 totalMistakes = 0
                 totalInputs = 0
                 totalCorrect = 0
-                sessionStartTime = nil
+                accumulatedTime = 0
+                activeStartTime = nil
                 wordResults = []
                 showWordCard = false
                 setupCurrentWord()
@@ -374,7 +405,7 @@ final class TypingViewModel {
     private func wordComplete() {
         isWordComplete = true
         wordsCompleted += 1
-        completeSound?.play()
+        playComplete()
         stopLoop()
 
         let duration = wordStartTime.map { Date().timeIntervalSince($0) } ?? 0

@@ -48,6 +48,12 @@ struct TypingView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { isFocused = true }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            viewModel.deactivate()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { isFocused = true }
+        }
         .task {
             if let db = appState.databaseService {
                 viewModel.start(database: db, bookId: appState.activeBookId)
