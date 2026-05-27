@@ -11,9 +11,9 @@ The entry point when opening the app.
 - Quick stats: streak days, mastered count, projected completion date
 
 ### Quick Actions
-- [Start Learning] → FSRS study session
-- [Quick Review] → Flashcard mode
-- [Practice Quiz] → Quiz mode
+- [Start Learning] → FSRS flashcard session (mixed new + due)
+- [Review Due] → Due cards only
+- [Type Practice] → Typing tab (qwerty-learner style)
 
 ---
 
@@ -123,7 +123,92 @@ Answer: garrulous + loquacious (both mean talkative)
 - Tracks error patterns to identify weak word clusters
 - Results feed back to FSRS (wrong answers trigger earlier review)
 
-### 3c. Speed Review (极速刷词)
+### 3c. Typing Practice (拼写练习 — qwerty-learner style)
+
+**When:** Building muscle memory for spelling. Complementary to passive flashcard review.
+
+**Philosophy:** On a computer, passive card-flipping has limited retention. Typing engages motor memory and active recall simultaneously. Inspired by [qwerty-learner](https://github.com/RealKai42/qwerty-learner).
+
+**Architecture:** Separate tab (not nested in Flashcard), independent from FSRS scheduling.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Ch 3/8              12/20                                ✕  │
+│ Accent:[US▾] Display:[Hide Vowels▾] Error:[Retry▾] Order:[Seq▾] ☑Loop │
+│─────────────────────────────────────────────────────────────│
+│                                                             │
+│          adj. 好斗的; 好战的                                 │
+│          /bɪˈlɪdʒərənt/                                    │
+│                                                             │
+│        b  e  l  l  i  g  e  r  e  n  t                     │
+│        ✓  ✓  ✓  _  _  _  _  _  _  _  _                     │
+│                                                             │
+│  ← abnormal    [Word List]    belittle →                    │
+│─────────────────────────────────────────────────────────────│
+│ Time: 2:34 | WPM: 12.3 | Inputs: 89 | Correct: 82 | 92%   │
+│─────────────────────────────────────────────────────────────│
+│ ◀ Prev Ch      ⌘R Replay  Space Card  ←→ Nav      Next Ch ▶│
+└─────────────────────────────────────────────────────────────┘
+```
+
+**State Machine:**
+```
+idle (释义可见, 字母隐藏, "Press any key to start")
+  ↓ 任意字母键/Space (消费掉, 不输入到单词)
+typing (计时, 发音, 逐字母验证)
+  ↓ Esc / 窗口失焦 / 切 tab
+idle (暂停计时, 停止循环读音)
+  ↓ 完成所有词
+chapterComplete (统计页: 正确率/WPM/错误词列表)
+```
+
+**Settings (all persisted across sessions):**
+
+| Setting | Options | Default |
+|---------|---------|---------|
+| Accent | US / UK | US |
+| Display (hide mode) | Show All / Hide Vowels / Hide Consonants / Random (40%) / Hide All | Show All |
+| Error handling | Retry Char / Reset Word | Retry Char |
+| Word order | Sequential / Shuffle | Sequential |
+| Loop Audio | On / Off | Off |
+
+**Hide Mode Progression (difficulty):**
+1. Show All — first pass, familiarization ★
+2. Hide Vowels — intermediate ★★
+3. Hide Consonants — harder ★★★
+4. Random (40% hidden) — unpredictable ★★★
+5. Hide All — full dictation ★★★★★
+
+**Chapter System:**
+- 20 words per chapter (from active book's sortOrder)
+- Progress persisted per book (UserDefaults)
+- Chapter complete page: accuracy / time / WPM + word list (errors first)
+- Actions: Repeat / Dictation Mode / Next Chapter
+
+**Sound Effects (system alert sounds):**
+- Correct letter: Tink (clear keystroke)
+- Wrong letter: Basso (warning)
+- Word complete: Glass (achievement)
+
+**Data Recording:**
+- `typingLog` table: wordId, bookId, mistakes, duration, mode, timestamp
+- Future: feed typing error patterns into FSRS weighting
+
+**Keyboard Shortcuts:**
+| Key | Action |
+|-----|--------|
+| Letters | Type spelling |
+| Space | Show/hide full word card |
+| ⌘R | Replay pronunciation |
+| Tab | Cycle hide mode |
+| ← | Go back to previous word |
+| → | Skip current word |
+| Esc | Pause (→ idle) or exit |
+| Return | Advance (after word complete) |
+
+---
+
+### 3d. Speed Review (极速刷词)
 
 **When:** Later stages, vocabulary maintenance. Low cognitive load.
 

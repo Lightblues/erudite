@@ -1180,4 +1180,4 @@ Build Configuration 之后, 下次按 "Run" 按钮运行的是 debug/release?
   - feat: 键入错误回退/输入无效
   - feat: 激活/退出 typing 状态
 - pitfalls
-  - 没有提示音: 
+  - 没有提示音: 可能是系统 alert volume 设置为 0!
