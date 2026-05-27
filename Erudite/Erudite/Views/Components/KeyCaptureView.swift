@@ -67,6 +67,9 @@ final class KeyNSView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
 
+    // CRITICAL: Pass all mouse events through to SwiftUI views underneath
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
     override func keyDown(with event: NSEvent) {
         let keyEvent = KeyEvent(
             keyCode: event.keyCode,

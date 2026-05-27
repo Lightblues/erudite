@@ -104,5 +104,34 @@ UI:
 - 所有 timer hack、onChange(of: isFocused) 等补丁全部移除
 ```
 KeyCaptureView 的作用是什么?
+```sh
+# 问题本质
 
+macOS 的键盘事件是通过 First Responder 链 传递的：
+
+NSWindow → firstResponder (某个 NSView) → keyDown:
+
+SwiftUI 的 .onKeyPress 依赖 @FocusState 把某个 SwiftUI view 设为 first responder。但：
+
+- Popover 弹出 → 创建新 NSWindow → firstResponder 移走
+- Button 点击 → NSButton 变成 firstResponder
+- Popover 关闭 → 没人把 firstResponder 还回来
+
+结果：键盘事件发到了"虚空"，系统播放 bonk 提示音。
+
+KeyCaptureView 做了什么
+
+它是一个透明的 NSView，做三件事：
+
+1. acceptsFirstResponder = true — 告诉系统"我能接收键盘"
+2. resignFirstResponder() → 自动重新抢回 — 当 button/popover 试图抢走焦点时，在下一个 runloop cycle 执行 window.makeFirstResponder(self) 把自己设回去
+3. windowDidBecomeKey → 恢复 — popover 关闭后窗口重新变为 key window 时，立刻重新抢焦点
+
+等价于一个"焦点钉子" — 焦点被抢走后立即弹回来，确保键盘事件永远到达我们的 handler。
+```
+
+
+## fix `InteractiveText` click
+修改之后, 预期功能正常了, 但发现一个新的 bug: 之前的 按键打开 word 详情的功能失效了 -- 所有的单词虽然有下划线标记, 但无法点击
+// 原因：KeyNSView 在 ZStack 最上层，虽然透明但默认仍接收鼠标点击（hitTest 返回自身），导致下面的 SwiftUI onTapGesture 全部被拦截。
 
