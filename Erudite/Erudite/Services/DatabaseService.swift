@@ -220,6 +220,19 @@ nonisolated(unsafe) final class DatabaseService: Sendable {
         }
     }
 
+    func fetchWord(bySpelling spelling: String) throws -> Word? {
+        let decoder = JSONDecoder()
+        return try dbQueue.read { db in
+            guard let row = try Row.fetchOne(db, sql: """
+                SELECT data FROM word WHERE spelling = ? COLLATE NOCASE
+                """, arguments: [spelling]) else {
+                return nil
+            }
+            guard let data = row["data"] as? Data else { return nil }
+            return try? decoder.decode(Word.self, from: data)
+        }
+    }
+
     func fetchWords(ids: [String]) throws -> [String: Word] {
         let decoder = JSONDecoder()
         return try dbQueue.read { db in

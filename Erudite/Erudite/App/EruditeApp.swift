@@ -8,8 +8,10 @@ struct EruditeApp: App {
         WindowGroup {
             ContentView()
                 .environment(appState)
+                .frame(minWidth: 800, minHeight: 500)
         }
         .windowStyle(.automatic)
         .defaultSize(width: 1000, height: 700)
+        .windowResizability(.contentSize)
     }
 }

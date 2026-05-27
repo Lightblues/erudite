@@ -6,14 +6,17 @@ import Observation
 @Observable
 final class StudyViewModel {
 
-    // MARK: - State
+    // MARK: - Types
 
     enum Phase {
         case loading
+        case idle       // paused — press Space to resume
         case studying
         case empty      // no cards available
         case complete   // session finished
     }
+
+    // MARK: - State
 
     var phase: Phase = .loading
     var currentWord: Word?
@@ -26,15 +29,63 @@ final class StudyViewModel {
     var cardsRemaining: Int = 0
     var sessionStartTime: Date = Date()
 
+    // Session results for summary
+    var reviewResults: [(word: Word, rating: Rating)] = []
+
+    // MARK: - Settings (persisted, shared with Typing)
+
+    var accent: TypingViewModel.Accent {
+        didSet {
+            UserDefaults.standard.set(accent.rawValue, forKey: "typing_accent")
+            pronunciation.voice = accent == .us ? PronunciationService.Voice.us : PronunciationService.Voice.uk
+        }
+    }
+
+    var loopPronunciation: Bool {
+        didSet {
+            UserDefaults.standard.set(loopPronunciation, forKey: "typing_loopPronunciation")
+        }
+    }
+
+    // MARK: - Word list access (for popover)
+
+    var queueWords: [(word: Word, card: ReviewCard)] {
+        cardQueue.compactMap { card in
+            guard let word = wordCache[card.wordId] else { return nil }
+            return (word: word, card: card)
+        }
+    }
+
+    /// Previous word (from history)
+    var previousWord: Word? {
+        guard let last = history.last else { return nil }
+        return last.word
+    }
+
+    /// Next word in queue
+    var nextWord: Word? {
+        guard let nextCard = cardQueue.first else { return nil }
+        return wordCache[nextCard.wordId]
+    }
+
     // MARK: - Dependencies
 
     private var database: DatabaseService?
     private let engine = FSRSEngine()
     private let pronunciation = PronunciationService()
     private var cardQueue: [ReviewCard] = []
-    private var wordCache: [String: Word] = [:]
+    private(set) var wordCache: [String: Word] = [:]
     private var history: [(card: ReviewCard, word: Word?)] = [] // for go-back
     private var bookId: String? = nil
+    private var loopTimer: Timer?
+
+    // MARK: - Init
+
+    init() {
+        self.accent = TypingViewModel.Accent(rawValue: UserDefaults.standard.string(forKey: "typing_accent") ?? "") ?? .us
+        self.loopPronunciation = UserDefaults.standard.bool(forKey: "typing_loopPronunciation")
+        self.pronunciation.voice = accent == .us ? PronunciationService.Voice.us : PronunciationService.Voice.uk
+    }
 
     // MARK: - Public API
 
@@ -44,8 +95,27 @@ final class StudyViewModel {
         self.sessionStartTime = Date()
         self.cardsStudied = 0
         self.history = []
+        self.reviewResults = []
+        pronunciation.voice = accent == .us ? PronunciationService.Voice.us : PronunciationService.Voice.uk
         pronunciation.clearCache()
         loadQueue(mode: mode)
+    }
+
+    /// Pause session (Esc key)
+    func deactivate() {
+        guard phase == .studying else { return }
+        stopLoop()
+        phase = .idle
+    }
+
+    /// Resume from pause
+    func activate() {
+        guard phase == .idle else { return }
+        phase = .studying
+        if let word = currentWord {
+            pronunciation.speak(word.spelling)
+            startLoopIfNeeded()
+        }
     }
 
     func reveal() {
@@ -54,10 +124,23 @@ final class StudyViewModel {
         schedulingResult = engine.schedule(card: currentCard!)
     }
 
+    /// Toggle card reveal state (space key)
+    func toggleReveal() {
+        if isRevealed {
+            isRevealed = false
+        } else {
+            reveal()
+        }
+    }
+
     func rate(_ rating: Rating) {
-        guard let card = currentCard,
-              let result = schedulingResult,
-              let db = database else { return }
+        guard let card = currentCard, let db = database else { return }
+
+        // For Easy without reveal, ensure we have scheduling result
+        if schedulingResult == nil {
+            schedulingResult = engine.schedule(card: card)
+        }
+        guard let result = schedulingResult else { return }
 
         // Get the updated card based on rating
         let updatedCard: ReviewCard = switch rating {
@@ -82,6 +165,9 @@ final class StudyViewModel {
         }
 
         cardsStudied += 1
+        if let word = currentWord {
+            reviewResults.append((word: word, rating: rating))
+        }
         advanceToNext()
     }
 
@@ -91,11 +177,18 @@ final class StudyViewModel {
         pronunciation.speak(word.spelling)
     }
 
-    /// Skip current card without rating (push to end of queue)
+    /// Toggle loop pronunciation
+    func toggleLoopPronunciation() {
+        loopPronunciation.toggle()
+        if loopPronunciation && phase == .studying {
+            startLoopIfNeeded()
+        } else {
+            stopLoop()
+        }
+    }
+
+    /// Skip current card without rating (just move to next, don't re-queue)
     func skip() {
-        guard let card = currentCard else { return }
-        // Put it back at the end so it comes up again later
-        cardQueue.append(card)
         advanceToNext()
     }
 
@@ -118,8 +211,29 @@ final class StudyViewModel {
         }
     }
 
+    /// Jump to a specific word in the queue
+    func goToWord(at index: Int) {
+        guard index >= 0, index < cardQueue.count else { return }
+        let card = cardQueue.remove(at: index)
+        // Save current card back to queue
+        if let current = currentCard {
+            cardQueue.insert(current, at: index)
+        }
+        currentCard = card
+        currentWord = wordCache[card.wordId]
+        isRevealed = false
+        schedulingResult = nil
+        cardsRemaining = cardQueue.count
+
+        if let word = currentWord {
+            pronunciation.speak(word.spelling)
+            startLoopIfNeeded()
+        }
+    }
+
     /// End the session early
     func endSession() {
+        stopLoop()
         pronunciation.stop()
         pronunciation.clearCache()
         phase = .complete
@@ -163,6 +277,14 @@ final class StudyViewModel {
                 cards = try db.fetchNewCards(limit: 20, inBook: bookId)
             }
 
+            // Deduplicate by wordId (keep first occurrence)
+            var seenWordIds: Set<String> = []
+            cards = cards.filter { card in
+                if seenWordIds.contains(card.wordId) { return false }
+                seenWordIds.insert(card.wordId)
+                return true
+            }
+
             guard !cards.isEmpty else {
                 phase = .empty
                 return
@@ -189,6 +311,7 @@ final class StudyViewModel {
         }
 
         guard !cardQueue.isEmpty else {
+            stopLoop()
             pronunciation.stop()
             phase = .complete
             return
@@ -205,6 +328,7 @@ final class StudyViewModel {
         // Auto-pronounce the new word
         if let word = currentWord {
             pronunciation.speak(word.spelling)
+            startLoopIfNeeded()
 
             // Prefetch next word's audio
             if let nextCard = cardQueue.first,
@@ -212,6 +336,23 @@ final class StudyViewModel {
                 pronunciation.prefetch(nextWord.spelling)
             }
         }
+    }
+
+    private func startLoopIfNeeded() {
+        stopLoop()
+        guard loopPronunciation, let word = currentWord else { return }
+        loopTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            guard let self, self.phase == .studying else {
+                self?.stopLoop()
+                return
+            }
+            self.pronunciation.speak(word.spelling)
+        }
+    }
+
+    private func stopLoop() {
+        loopTimer?.invalidate()
+        loopTimer = nil
     }
 }
 

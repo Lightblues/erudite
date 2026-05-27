@@ -6,53 +6,39 @@ struct TypingView: View {
     @Environment(AppState.self) private var appState
     @State private var viewModel = TypingViewModel()
     @State private var showWordList = false
-    @FocusState private var isFocused: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            switch viewModel.phase {
-            case .loading:
-                ProgressView("Loading chapter...")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            case .idle:
-                idleContent
-            case .typing:
-                typingContent
-            case .chapterComplete:
-                chapterCompleteView
-            case .empty:
-                ContentUnavailableView(
-                    "No Words Available",
-                    systemImage: "character.book.closed",
-                    description: Text("Select a word book from the Today page first.")
-                )
+        ZStack {
+            VStack(spacing: 0) {
+                switch viewModel.phase {
+                case .loading:
+                    ProgressView("Loading chapter...")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .idle:
+                    idleContent
+                case .typing:
+                    typingContent
+                case .chapterComplete:
+                    chapterCompleteView
+                case .empty:
+                    ContentUnavailableView(
+                        "No Words Available",
+                        systemImage: "character.book.closed",
+                        description: Text("Select a word book from the Today page first.")
+                    )
+                }
             }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .focusable()
-        .focusEffectDisabled()
-        .focused($isFocused)
-        .onKeyPress(phases: .down) { press in
-            handleKeyPress(press)
-        }
-        .onAppear { isFocused = true }
-        .onChange(of: appState.selectedTab) {
-            if appState.selectedTab == .typing {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { isFocused = true }
-            } else {
-                viewModel.deactivate()
-            }
-        }
-        .onChange(of: showWordList) {
-            if !showWordList {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { isFocused = true }
-            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // Keyboard capture layer
+            KeyCaptureView(
+                onKeyDown: { event in handleKeyEvent(event) },
+                isActive: appState.selectedTab == .typing && !showWordList
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             viewModel.deactivate()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { isFocused = true }
         }
         .task {
             if let db = appState.databaseService {
@@ -263,35 +249,12 @@ struct TypingView: View {
     // MARK: - Full Word Card
 
     private func wordCardView(word: Word) -> some View {
-        VStack(spacing: 16) {
-            Text(word.spelling)
-                .font(.system(size: 36, weight: .bold, design: .serif))
-            if let phonetic = word.phonetic {
-                Text(phonetic).font(.title3).foregroundStyle(.secondary)
-            }
-            Divider().frame(maxWidth: 300)
-            ForEach(Array(word.definitions.enumerated()), id: \.offset) { _, def in
-                HStack(spacing: 8) {
-                    if !def.partOfSpeech.isEmpty {
-                        Text(def.partOfSpeech).font(.callout).fontWeight(.semibold).foregroundStyle(.blue)
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        if !def.chinese.isEmpty { Text(def.chinese) }
-                        if !def.english.isEmpty { Text(def.english).font(.callout).foregroundStyle(.secondary) }
-                    }
-                }
-            }
-            if !word.synonymGroups.isEmpty {
-                HStack {
-                    Text("Syn:").font(.caption).foregroundStyle(.secondary)
-                    Text(word.synonymGroups.flatMap { $0 }.prefix(5).joined(separator: ", "))
-                        .font(.caption).foregroundStyle(.green)
-                }
-            }
-            Text("Press Space to dismiss").font(.caption2).foregroundStyle(.tertiary).padding(.top, 8)
+        ScrollView(.vertical, showsIndicators: false) {
+            WordPopoverView(word: word, onDismiss: {
+                viewModel.toggleWordCard()
+            })
         }
-        .padding(24)
-        .frame(maxWidth: 500)
+        .frame(maxWidth: 500, maxHeight: 400)
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
     }
 
@@ -382,7 +345,6 @@ struct TypingView: View {
                     Button {
                         viewModel.goToWord(at: index)
                         showWordList = false
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { isFocused = true }
                     } label: {
                         HStack {
                             Text("\(index + 1)").font(.caption).foregroundStyle(.tertiary)
@@ -527,82 +489,76 @@ struct TypingView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - Key Handling
+    // MARK: - Key Handling (via KeyCaptureView)
 
-    private func handleKeyPress(_ press: KeyPress) -> KeyPress.Result {
-        // Escape: deactivate or exit
-        if press.key == .escape {
+    private func handleKeyEvent(_ event: KeyEvent) -> Bool {
+        // Escape: deactivate (pause)
+        if event.isEscape {
             if viewModel.phase == .typing {
                 viewModel.deactivate()
-                return .handled
-            } else {
-                appState.selectedTab = .today
-                return .handled
             }
+            return true
         }
 
         // In idle: any key (letter or space) activates — but does NOT input to word
         if viewModel.phase == .idle {
-            let chars = press.characters.lowercased()
-            let isLetter = chars.count == 1 && chars.first?.isLetter == true
-            let isSpace = press.key == .space
-
-            if isLetter || isSpace {
+            if event.isSpace {
                 viewModel.activate()
-                return .handled  // consume the key, don't pass to word
+                return true
             }
-            // Allow navigation even in idle
-            if press.key == .tab { viewModel.cycleHideMode(); return .handled }
-            if press.key == .rightArrow { viewModel.skipWord(); return .handled }
-            if press.key == .leftArrow { viewModel.goBack(); return .handled }
-            return .ignored
+            if let c = event.char, c.isLetter {
+                viewModel.activate()
+                return true
+            }
+            if event.isTab { viewModel.cycleHideMode(); return true }
+            if event.isRightArrow { viewModel.skipWord(); return true }
+            if event.isLeftArrow { viewModel.goBack(); return true }
+            return true  // consume all
         }
 
-        guard viewModel.phase == .typing else { return .ignored }
+        guard viewModel.phase == .typing else { return true }
 
         // Space: toggle word card
-        if press.key == .space {
+        if event.isSpace {
             viewModel.toggleWordCard()
-            return .handled
+            return true
         }
 
         // Cmd+R: replay
-        if press.key == KeyEquivalent("r") && press.modifiers.contains(.command) {
+        if event.char == "r" && event.hasCommand {
             viewModel.replayPronunciation()
-            return .handled
+            return true
         }
 
         // Tab: cycle hide mode
-        if press.key == .tab {
+        if event.isTab {
             viewModel.cycleHideMode()
-            return .handled
+            return true
         }
 
         // Arrows
-        if press.key == .leftArrow { viewModel.goBack(); return .handled }
-        if press.key == .rightArrow { viewModel.skipWord(); return .handled }
+        if event.isLeftArrow { viewModel.goBack(); return true }
+        if event.isRightArrow { viewModel.skipWord(); return true }
 
         // Return: advance if complete
-        if press.key == .return {
+        if event.isReturn {
             if viewModel.isWordComplete { viewModel.skipWord() }
-            return .handled
+            return true
         }
 
         // Letter input
         if !viewModel.showWordCard {
-            let chars = press.characters.lowercased()
+            let chars = event.characters.lowercased()
             if chars.count == 1, let char = chars.first, char.isLetter {
                 viewModel.handleKeystroke(char)
-                return .handled
+                return true
             }
-            if press.characters == "-" || press.characters == " " {
-                if let char = press.characters.first {
-                    viewModel.handleKeystroke(char)
-                    return .handled
-                }
+            if event.characters == "-" {
+                viewModel.handleKeystroke(Character("-"))
+                return true
             }
         }
 
-        return .ignored
+        return true  // consume all
     }
 }

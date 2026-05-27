@@ -18,9 +18,11 @@ AI-native macOS vocabulary app for GRE/TOEFL/SAT preparation. Built with Swift +
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Multi-wordbook (6 books, 13k words) | ✅ Done | GRE/TOEFL/SAT, shared word pool |
-| Flashcard mode (FSRS) | ✅ Done | Stub FSRS (fixed intervals) |
+| Flashcard mode (FSRS) | ✅ Done | Stub FSRS (fixed intervals), full UI with header/settings/word list |
 | Typing Practice (qwerty-learner) | ✅ Done | Separate tab, full feature set |
+| Interactive Dictionary | ✅ Done | Click any English word → popover or Eudic fallback |
 | Dashboard / Stats | ✅ Done | Swift Charts, live stats |
+| KeyCaptureView (focus system) | ✅ Done | NSViewRepresentable, replaces @FocusState hacks |
 | FSRS-5 real algorithm | 📋 Todo | Issue #11 |
 | Quiz / SE pairing | 📋 Todo | Issues #12, #13 |
 | Speed Review | 📋 Todo | Issue #14 |
