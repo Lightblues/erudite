@@ -84,9 +84,60 @@ struct WordPopoverView: View {
                 let synonyms = word.synonymGroups.flatMap { $0 }.prefix(5)
                 SynonymChipsView(synonyms: Array(synonyms))
             }
+
+            Divider()
+
+            // Footer: Open in Eudic link
+            HStack {
+                Spacer()
+                Button {
+                    WordLookupService.openInEudic(word.spelling)
+                } label: {
+                    Label("Open in Eudic", systemImage: "book")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.blue)
+            }
         }
         .padding(16)
         .frame(width: 360, alignment: .leading)
+    }
+}
+
+// MARK: - Not Found Popover
+
+/// Shown when a word is not found in local DB or API.
+struct NotFoundPopoverView: View {
+    let spelling: String
+    var onDismiss: (() -> Void)?
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Text(spelling)
+                    .font(.system(size: 18, weight: .bold, design: .serif))
+                Spacer()
+                Button { onDismiss?() } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Text("Word not found in dictionary")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            Button {
+                WordLookupService.openInEudic(spelling)
+            } label: {
+                Label("Look up in Eudic", systemImage: "book")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(16)
+        .frame(width: 280)
     }
 }
 
@@ -135,8 +186,13 @@ struct SynonymChipsView: View {
         let cleaned = spelling.lowercased()
         if let word = service.lookup(cleaned) {
             popoverWord = word
-        } else {
-            service.openInEudic(cleaned)
+            return
+        }
+        Task {
+            let result = await service.lookupAsync(cleaned)
+            if case .found(let word) = result {
+                popoverWord = word
+            }
         }
     }
 }

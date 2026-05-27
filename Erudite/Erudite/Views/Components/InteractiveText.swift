@@ -3,8 +3,7 @@ import SwiftUI
 // MARK: - Interactive Text
 
 /// A text view that makes English words clickable for dictionary lookup.
-/// Clicking a word shows a popover with its definition (if in local DB)
-/// or opens Eudic dictionary as fallback.
+/// Clicking a word checks local DB first, then queries Free Dictionary API if not found.
 struct InteractiveText: View {
     let text: String
     var font: Font = .callout
@@ -13,6 +12,9 @@ struct InteractiveText: View {
 
     @Environment(AppState.self) private var appState
     @State private var popoverWord: Word?
+    @State private var isLoading = false
+    @State private var showNotFound = false
+    @State private var notFoundSpelling: String = ""
 
     var body: some View {
         let tokens = Self.tokenize(text)
@@ -45,6 +47,11 @@ struct InteractiveText: View {
                 popoverWord = nil
             }
         }
+        .popover(isPresented: $showNotFound, arrowEdge: .bottom) {
+            NotFoundPopoverView(spelling: notFoundSpelling) {
+                showNotFound = false
+            }
+        }
     }
 
     private func handleTap(token: TextToken) {
@@ -52,10 +59,23 @@ struct InteractiveText: View {
         guard let service = appState.wordLookupService else { return }
 
         let cleaned = token.text.lowercased()
+
+        // Try local DB first (instant)
         if let word = service.lookup(cleaned) {
             popoverWord = word
-        } else {
-            service.openInEudic(cleaned)
+            return
+        }
+
+        // Async: query API → cache → show
+        Task {
+            let result = await service.lookupAsync(cleaned)
+            switch result {
+            case .found(let word):
+                popoverWord = word
+            case .notFound(let spelling):
+                notFoundSpelling = spelling
+                showNotFound = true
+            }
         }
     }
 

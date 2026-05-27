@@ -233,6 +233,28 @@ nonisolated(unsafe) final class DatabaseService: Sendable {
         }
     }
 
+    /// Insert a single word (from API cache). Uses INSERT OR IGNORE to not overwrite existing enriched data.
+    func insertCachedWord(_ word: Word) throws {
+        let encoder = JSONEncoder()
+        try dbQueue.write { db in
+            let jsonData = try encoder.encode(word)
+            try db.execute(
+                sql: """
+                    INSERT OR IGNORE INTO word (id, spelling, phonetic, sentiment, frequency, data)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                arguments: [
+                    word.id,
+                    word.spelling,
+                    word.phonetic,
+                    word.sentiment.rawValue,
+                    word.frequency.rawValue,
+                    jsonData
+                ]
+            )
+        }
+    }
+
     func fetchWords(ids: [String]) throws -> [String: Word] {
         let decoder = JSONDecoder()
         return try dbQueue.read { db in
