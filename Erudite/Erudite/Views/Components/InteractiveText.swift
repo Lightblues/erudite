@@ -13,7 +13,6 @@ struct InteractiveText: View {
 
     @Environment(AppState.self) private var appState
     @State private var popoverWord: Word?
-    @State private var showPopover = false
 
     var body: some View {
         let tokens = Self.tokenize(text)
@@ -41,12 +40,9 @@ struct InteractiveText: View {
                 }
             }
         }
-        .popover(isPresented: $showPopover, arrowEdge: .bottom) {
-            if let word = popoverWord {
-                WordPopoverView(word: word) {
-                    showPopover = false
-                    popoverWord = nil
-                }
+        .popover(item: $popoverWord, arrowEdge: .bottom) { word in
+            WordPopoverView(word: word) {
+                popoverWord = nil
             }
         }
     }
@@ -58,7 +54,6 @@ struct InteractiveText: View {
         let cleaned = token.text.lowercased()
         if let word = service.lookup(cleaned) {
             popoverWord = word
-            showPopover = true
         } else {
             service.openInEudic(cleaned)
         }
