@@ -29,6 +29,8 @@ struct StudyView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
+        .contentShape(Rectangle())  // Make entire area clickable for focus
+        .onTapGesture { isFocused = true }  // Restore focus on click
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
@@ -60,25 +62,21 @@ struct StudyView: View {
     // MARK: - Key Handling
 
     private func handleKeyPress(_ press: KeyPress) -> KeyPress.Result {
-        // Escape: deactivate (pause) from studying, go home from idle
+        // Escape: deactivate (pause) from studying
         if press.key == .escape {
             if viewModel.phase == .studying {
                 viewModel.deactivate()
                 return .handled
-            } else if viewModel.phase == .idle {
-                appState.selectedTab = .today
-                return .handled
             }
-            return .ignored
+            return .handled  // consume in all phases to avoid bonk
         }
 
-        // In idle: Space or rating keys resume
+        // In idle: any key resumes
         if viewModel.phase == .idle {
-            if press.key == .space {
+            if press.key == .space || press.key == .return {
                 viewModel.activate()
                 return .handled
             }
-            // Allow navigation even in idle
             if press.key == .rightArrow || press.key == KeyEquivalent("n") {
                 viewModel.activate()
                 viewModel.skip()
@@ -89,11 +87,21 @@ struct StudyView: View {
                 viewModel.goBack()
                 return .handled
             }
-            return .ignored
+            if press.key == KeyEquivalent("q") {
+                viewModel.endSession()
+                return .handled
+            }
+            // Any other key: just activate
+            let chars = press.characters.lowercased()
+            if chars.count == 1, chars.first?.isLetter == true {
+                viewModel.activate()
+                return .handled
+            }
+            return .handled  // consume all to avoid system bonk
         }
 
         // Only handle remaining keys during active study
-        guard viewModel.phase == .studying else { return .ignored }
+        guard viewModel.phase == .studying else { return .handled }
 
         switch press.key {
         // Space: toggle reveal
@@ -182,6 +190,10 @@ struct StudyView: View {
                 cardView(word: word)
             }
 
+            // Prev / Next navigation preview
+            navigationPreview
+                .padding(.top, 12)
+
             Spacer()
 
             // Rating buttons (shown after reveal)
@@ -246,12 +258,6 @@ struct StudyView: View {
 
     private var footerBar: some View {
         HStack {
-            Button { showWordList.toggle() } label: {
-                Label("Word List", systemImage: "list.bullet").font(.caption)
-            }
-            .buttonStyle(.bordered).controlSize(.small)
-            .popover(isPresented: $showWordList) { wordListPopover }
-
             Spacer()
 
             HStack(spacing: 12) {
@@ -333,6 +339,41 @@ struct StudyView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Navigation Preview
+
+    private var navigationPreview: some View {
+        HStack {
+            if let prev = viewModel.previousWord {
+                Button { viewModel.goBack() } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left").font(.caption2)
+                        Text(prev.spelling).font(.caption)
+                    }.foregroundStyle(.tertiary)
+                }.buttonStyle(.plain)
+            } else { Spacer().frame(width: 80) }
+
+            Spacer()
+
+            Button { showWordList.toggle() } label: {
+                Label("Word List", systemImage: "list.bullet").font(.caption)
+            }
+            .buttonStyle(.bordered).controlSize(.small)
+            .popover(isPresented: $showWordList) { wordListPopover }
+
+            Spacer()
+
+            if let next = viewModel.nextWord {
+                Button { viewModel.skip() } label: {
+                    HStack(spacing: 4) {
+                        Text(next.spelling).font(.caption)
+                        Image(systemName: "chevron.right").font(.caption2)
+                    }.foregroundStyle(.tertiary)
+                }.buttonStyle(.plain)
+            } else { Spacer().frame(width: 80) }
+        }
+        .padding(.horizontal, 40)
     }
 
     // MARK: - Card View
@@ -526,45 +567,96 @@ struct StudyView: View {
     // MARK: - Complete State
 
     private var completeState: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "party.popper.fill")
-                .font(.system(size: 48))
-                .foregroundStyle(.orange)
+        ScrollView {
+            VStack(spacing: 24) {
+                Image(systemName: "party.popper.fill")
+                    .font(.system(size: 48))
+                    .foregroundStyle(.orange)
 
-            Text("Session Complete!")
-                .font(.title)
-                .fontWeight(.bold)
+                Text("Session Complete!")
+                    .font(.title)
+                    .fontWeight(.bold)
 
-            HStack(spacing: 32) {
-                VStack {
-                    Text("\(viewModel.cardsStudied)")
-                        .font(.title)
-                        .fontWeight(.bold)
-                        .foregroundStyle(.blue)
-                    Text("Cards")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                // Stats summary
+                HStack(spacing: 32) {
+                    VStack {
+                        Text("\(viewModel.cardsStudied)")
+                            .font(.title)
+                            .fontWeight(.bold)
+                            .foregroundStyle(.blue)
+                        Text("Cards")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    VStack {
+                        Text(formatDuration(viewModel.sessionDuration))
+                            .font(.title)
+                            .fontWeight(.bold)
+                            .foregroundStyle(.purple)
+                        Text("Duration")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    VStack {
+                        let againCount = viewModel.reviewResults.filter { $0.rating == .again }.count
+                        Text("\(againCount)")
+                            .font(.title)
+                            .fontWeight(.bold)
+                            .foregroundStyle(againCount > 0 ? .red : .green)
+                        Text("Again")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                VStack {
-                    Text(formatDuration(viewModel.sessionDuration))
-                        .font(.title)
-                        .fontWeight(.bold)
-                        .foregroundStyle(.purple)
-                    Text("Duration")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                .padding()
+                .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
+
+                // Word results (sorted: Again first, then Hard, Good, Easy)
+                if !viewModel.reviewResults.isEmpty {
+                    GroupBox("Words Reviewed") {
+                        VStack(spacing: 4) {
+                            let sorted = viewModel.reviewResults.sorted { $0.rating.rawValue < $1.rating.rawValue }
+                            ForEach(Array(sorted.enumerated()), id: \.offset) { _, result in
+                                HStack {
+                                    Text(result.word.spelling)
+                                        .font(.body.monospaced())
+                                        .fontWeight(result.rating == .again ? .bold : .regular)
+                                        .foregroundStyle(ratingColor(result.rating))
+                                    Spacer()
+                                    if let def = result.word.definitions.first {
+                                        Text(def.chinese)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                    Spacer()
+                                    Text(result.rating.label)
+                                        .font(.caption2)
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 2)
+                                        .background(ratingColor(result.rating).opacity(0.15), in: Capsule())
+                                        .foregroundStyle(ratingColor(result.rating))
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
+                    .frame(maxWidth: 500)
                 }
+
+                Button("Study More") {
+                    if let db = appState.databaseService {
+                        viewModel.start(database: db)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .padding(.top)
             }
-
-            Button("Study More") {
-                if let db = appState.databaseService {
-                    viewModel.start(database: db)
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .padding(.top)
+            .padding(32)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Helpers
@@ -593,6 +685,15 @@ struct StudyView: View {
         case .learning: .orange
         case .review: .green
         case .relearning: .red
+        }
+    }
+
+    private func ratingColor(_ rating: Rating) -> Color {
+        switch rating {
+        case .again: .red
+        case .hard: .orange
+        case .good: .green
+        case .easy: .blue
         }
     }
 

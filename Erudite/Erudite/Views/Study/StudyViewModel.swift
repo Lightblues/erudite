@@ -29,6 +29,9 @@ final class StudyViewModel {
     var cardsRemaining: Int = 0
     var sessionStartTime: Date = Date()
 
+    // Session results for summary
+    var reviewResults: [(word: Word, rating: Rating)] = []
+
     // MARK: - Settings (persisted, shared with Typing)
 
     var accent: TypingViewModel.Accent {
@@ -51,6 +54,18 @@ final class StudyViewModel {
             guard let word = wordCache[card.wordId] else { return nil }
             return (word: word, card: card)
         }
+    }
+
+    /// Previous word (from history)
+    var previousWord: Word? {
+        guard let last = history.last else { return nil }
+        return last.word
+    }
+
+    /// Next word in queue
+    var nextWord: Word? {
+        guard let nextCard = cardQueue.first else { return nil }
+        return wordCache[nextCard.wordId]
     }
 
     // MARK: - Dependencies
@@ -80,6 +95,7 @@ final class StudyViewModel {
         self.sessionStartTime = Date()
         self.cardsStudied = 0
         self.history = []
+        self.reviewResults = []
         pronunciation.voice = accent == .us ? PronunciationService.Voice.us : PronunciationService.Voice.uk
         pronunciation.clearCache()
         loadQueue(mode: mode)
@@ -149,6 +165,9 @@ final class StudyViewModel {
         }
 
         cardsStudied += 1
+        if let word = currentWord {
+            reviewResults.append((word: word, rating: rating))
+        }
         advanceToNext()
     }
 

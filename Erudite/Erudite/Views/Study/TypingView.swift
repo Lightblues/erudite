@@ -29,6 +29,8 @@ struct TypingView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())  // Make entire area clickable for focus
+        .onTapGesture { isFocused = true }  // Restore focus on click
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
@@ -507,15 +509,12 @@ struct TypingView: View {
     // MARK: - Key Handling
 
     private func handleKeyPress(_ press: KeyPress) -> KeyPress.Result {
-        // Escape: deactivate or exit
+        // Escape: deactivate (pause)
         if press.key == .escape {
             if viewModel.phase == .typing {
                 viewModel.deactivate()
-                return .handled
-            } else {
-                appState.selectedTab = .today
-                return .handled
             }
+            return .handled  // consume in all phases to avoid bonk
         }
 
         // In idle: any key (letter or space) activates — but does NOT input to word
@@ -532,10 +531,10 @@ struct TypingView: View {
             if press.key == .tab { viewModel.cycleHideMode(); return .handled }
             if press.key == .rightArrow { viewModel.skipWord(); return .handled }
             if press.key == .leftArrow { viewModel.goBack(); return .handled }
-            return .ignored
+            return .handled  // consume all keys in idle to avoid system bonk
         }
 
-        guard viewModel.phase == .typing else { return .ignored }
+        guard viewModel.phase == .typing else { return .handled }
 
         // Space: toggle word card
         if press.key == .space {
