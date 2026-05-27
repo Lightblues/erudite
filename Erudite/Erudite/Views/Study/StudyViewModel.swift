@@ -54,6 +54,15 @@ final class StudyViewModel {
         schedulingResult = engine.schedule(card: currentCard!)
     }
 
+    /// Toggle card reveal state (space key)
+    func toggleReveal() {
+        if isRevealed {
+            isRevealed = false
+        } else {
+            reveal()
+        }
+    }
+
     func rate(_ rating: Rating) {
         guard let card = currentCard,
               let result = schedulingResult,

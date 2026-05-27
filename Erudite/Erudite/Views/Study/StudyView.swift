@@ -60,13 +60,9 @@ struct StudyView: View {
         guard viewModel.phase == .studying else { return .ignored }
 
         switch press.key {
-        // Space: reveal → then rate Good on second press
+        // Space: reveal / hide (toggle)
         case .space:
-            if !viewModel.isRevealed {
-                viewModel.reveal()
-            } else {
-                viewModel.rate(.good)
-            }
+            viewModel.toggleReveal()
             return .handled
 
         // Rating: 1234 number keys + jkl;
@@ -125,12 +121,10 @@ struct StudyView: View {
             // Rating buttons (shown after reveal)
             if viewModel.isRevealed {
                 ratingButtons
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
             } else {
                 revealHint
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: viewModel.isRevealed)
     }
 
     // MARK: - Card View
@@ -168,55 +162,57 @@ struct StudyView: View {
                 Divider()
                     .padding(.horizontal, 40)
 
-                // Back: definitions
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(Array(word.definitions.enumerated()), id: \.offset) { _, def in
-                        HStack(alignment: .top, spacing: 8) {
-                            if !def.partOfSpeech.isEmpty {
-                                Text(def.partOfSpeech)
-                                    .font(.caption)
-                                    .fontWeight(.medium)
-                                    .foregroundStyle(.orange)
-                                    .frame(width: 32, alignment: .trailing)
-                            }
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(def.chinese)
-                                    .font(.body)
-                                if !def.english.isEmpty {
-                                    InteractiveText(text: def.english, font: .callout, color: .secondary)
+                // Back: definitions (scrollable to prevent overflow)
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(Array(word.definitions.enumerated()), id: \.offset) { _, def in
+                            HStack(alignment: .top, spacing: 8) {
+                                if !def.partOfSpeech.isEmpty {
+                                    Text(def.partOfSpeech)
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                        .foregroundStyle(.orange)
+                                        .frame(width: 32, alignment: .trailing)
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(def.chinese)
+                                        .font(.body)
+                                    if !def.english.isEmpty {
+                                        InteractiveText(text: def.english, font: .callout, color: .secondary)
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    // Example sentence
-                    if let example = word.examples.first {
-                        InteractiveText(text: example.sentence, font: .callout, color: .secondary, italic: true)
-                            .padding(.top, 4)
-                    }
-
-                    // Mnemonic
-                    if let mnemonic = word.mnemonics.first {
-                        HStack(alignment: .top, spacing: 6) {
-                            Image(systemName: "lightbulb.fill")
-                                .foregroundStyle(.yellow)
-                                .font(.caption)
-                            InteractiveText(text: mnemonic, font: .callout, color: .primary.opacity(0.8))
+                        // Example sentence
+                        if let example = word.examples.first {
+                            InteractiveText(text: example.sentence, font: .callout, color: .secondary, italic: true)
+                                .padding(.top, 4)
                         }
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.yellow.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-                    }
 
-                    // Synonyms
-                    if !word.synonymGroups.isEmpty {
-                        let synonyms = Array(word.synonymGroups.flatMap { $0 }.prefix(6))
-                        SynonymChipsView(synonyms: synonyms)
+                        // Mnemonic
+                        if let mnemonic = word.mnemonics.first {
+                            HStack(alignment: .top, spacing: 6) {
+                                Image(systemName: "lightbulb.fill")
+                                    .foregroundStyle(.yellow)
+                                    .font(.caption)
+                                InteractiveText(text: mnemonic, font: .callout, color: .primary.opacity(0.8))
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.yellow.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                        }
+
+                        // Synonyms
+                        if !word.synonymGroups.isEmpty {
+                            let synonyms = Array(word.synonymGroups.flatMap { $0 }.prefix(6))
+                            SynonymChipsView(synonyms: synonyms)
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20)
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                .frame(maxHeight: 280)
             }
         }
         .padding(32)
@@ -255,7 +251,7 @@ struct StudyView: View {
 
             // Shortcut legend
             HStack(spacing: 16) {
-                shortcutHint("Space", label: "Good")
+                shortcutHint("Space", label: "Toggle")
                 shortcutHint("← p", label: "Back")
                 shortcutHint("→ n", label: "Skip")
                 shortcutHint("R", label: "Replay")
