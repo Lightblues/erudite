@@ -150,15 +150,7 @@ struct WordDetailView: View {
                 .font(.headline)
 
             ForEach(Array(word.synonymGroups.enumerated()), id: \.offset) { _, group in
-                FlowLayout(spacing: 6) {
-                    ForEach(group, id: \.self) { synonym in
-                        Text(synonym)
-                            .font(.callout)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .background(.blue.opacity(0.1), in: Capsule())
-                    }
-                }
+                SynonymChipsView(synonyms: group, chipFont: .callout, chipPaddingH: 10, chipPaddingV: 4)
             }
         }
     }

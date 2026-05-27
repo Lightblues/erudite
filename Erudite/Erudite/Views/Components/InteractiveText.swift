@@ -19,7 +19,7 @@ struct InteractiveText: View {
         let tokens = Self.tokenize(text)
         TextFlowLayout(spacing: 0) {
             ForEach(tokens) { token in
-                if token.isWord {
+                if token.isWord && !Self.isCommonWord(token.text) {
                     Text(token.text)
                         .font(font)
                         .italic(italic)
@@ -45,6 +45,7 @@ struct InteractiveText: View {
             if let word = popoverWord {
                 WordPopoverView(word: word) {
                     showPopover = false
+                    popoverWord = nil
                 }
             }
         }
@@ -61,6 +62,51 @@ struct InteractiveText: View {
         } else {
             service.openInEudic(cleaned)
         }
+    }
+
+    // MARK: - Common Words Filter
+
+    /// Words too common to look up — basic function words, pronouns, prepositions, etc.
+    private static let commonWords: Set<String> = [
+        // Articles & determiners
+        "a", "an", "the", "this", "that", "these", "those",
+        // Pronouns
+        "i", "me", "my", "mine", "we", "us", "our", "ours",
+        "you", "your", "yours", "he", "him", "his", "she", "her", "hers",
+        "it", "its", "they", "them", "their", "theirs", "who", "whom", "whose",
+        "what", "which", "one", "ones", "self",
+        // Prepositions
+        "in", "on", "at", "to", "for", "of", "with", "by", "from",
+        "up", "out", "off", "into", "onto", "upon", "about", "over",
+        "under", "below", "above", "between", "among", "through", "during",
+        "before", "after", "since", "until", "than",
+        // Conjunctions
+        "and", "or", "but", "nor", "so", "yet", "if", "then", "else",
+        "when", "while", "as", "because", "although", "though",
+        // Common verbs (most basic forms)
+        "is", "am", "are", "was", "were", "be", "been", "being",
+        "have", "has", "had", "having", "do", "does", "did", "doing",
+        "will", "would", "shall", "should", "may", "might", "can", "could",
+        "get", "got", "go", "goes", "went", "gone", "come", "came",
+        "make", "made", "take", "took", "give", "gave", "let",
+        "say", "said", "tell", "told", "see", "saw", "know", "knew",
+        // Common adjectives / adverbs
+        "not", "no", "yes", "very", "too", "also", "just", "only",
+        "more", "most", "less", "least", "much", "many", "few",
+        "all", "some", "any", "every", "each", "both", "other", "another",
+        "such", "same", "own", "new", "old", "big", "small", "good", "bad",
+        "well", "how", "here", "there", "where", "now", "still",
+        // Common nouns & misc
+        "thing", "things", "way", "time", "people", "man", "woman",
+        "day", "year", "part", "place", "case", "group", "fact",
+    ]
+
+    /// Returns true if the word is too common/simple to warrant a dictionary lookup.
+    static func isCommonWord(_ word: String) -> Bool {
+        let lower = word.lowercased()
+        // Single characters are never interesting
+        if lower.count <= 2 { return true }
+        return commonWords.contains(lower)
     }
 
     // MARK: - Tokenizer

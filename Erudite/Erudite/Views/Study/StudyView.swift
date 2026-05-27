@@ -210,19 +210,8 @@ struct StudyView: View {
 
                     // Synonyms
                     if !word.synonymGroups.isEmpty {
-                        let synonyms = word.synonymGroups.flatMap { $0 }.prefix(6)
-                        HStack(spacing: 6) {
-                            Image(systemName: "link")
-                                .font(.caption2)
-                                .foregroundStyle(.blue)
-                            ForEach(Array(synonyms), id: \.self) { syn in
-                                Text(syn)
-                                    .font(.caption)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(.blue.opacity(0.1), in: Capsule())
-                            }
-                        }
+                        let synonyms = Array(word.synonymGroups.flatMap { $0 }.prefix(6))
+                        SynonymChipsView(synonyms: synonyms)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
