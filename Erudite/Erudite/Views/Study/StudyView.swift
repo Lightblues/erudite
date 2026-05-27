@@ -6,10 +6,24 @@ struct StudyView: View {
     @Environment(AppState.self) private var appState
     @State private var viewModel = StudyViewModel()
     @State private var showWordList = false
-    @FocusState private var isFocused: Bool
 
     var body: some View {
-        flashcardContent
+        ZStack {
+            // UI layer
+            flashcardContent
+
+            // Keyboard capture layer (always grabs focus, handles all shortcuts)
+            KeyCaptureView(
+                onKeyDown: { event in handleKeyEvent(event) },
+                isActive: appState.selectedTab == .flashcard && !showWordList
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .task {
+            if let db = appState.databaseService {
+                viewModel.start(database: db, mode: appState.studyMode, bookId: appState.activeBookId)
+            }
+        }
     }
 
     private var flashcardContent: some View {
@@ -29,134 +43,93 @@ struct StudyView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
-        .background {
-            // Invisible tap target behind everything — restores focus when clicking empty space
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture { isFocused = true }
-        }
-        .focusable()
-        .focusEffectDisabled()
-        .focused($isFocused)
-        .onKeyPress { press in
-            handleKeyPress(press)
-        }
-        .task {
-            if let db = appState.databaseService {
-                viewModel.start(database: db, mode: appState.studyMode, bookId: appState.activeBookId)
-            }
-        }
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                isFocused = true
-            }
-        }
-        .onChange(of: appState.selectedTab) {
-            if appState.selectedTab == .flashcard {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { isFocused = true }
-            }
-        }
-        .onChange(of: showWordList) {
-            if !showWordList {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { isFocused = true }
-            }
-        }
-        // Auto-restore focus when it's lost (e.g., after button clicks, popover dismiss)
-        .onChange(of: isFocused) {
-            if !isFocused && appState.selectedTab == .flashcard && !showWordList {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    if !isFocused { isFocused = true }
-                }
-            }
-        }
     }
 
-    // MARK: - Key Handling
+    // MARK: - Key Handling (via KeyCaptureView — always has focus)
 
-    private func handleKeyPress(_ press: KeyPress) -> KeyPress.Result {
+    private func handleKeyEvent(_ event: KeyEvent) -> Bool {
         // Escape: deactivate (pause) from studying
-        if press.key == .escape {
+        if event.isEscape {
             if viewModel.phase == .studying {
                 viewModel.deactivate()
-                return .handled
             }
-            return .handled  // consume in all phases to avoid bonk
+            return true
         }
 
         // In idle: any key resumes
         if viewModel.phase == .idle {
-            if press.key == .space || press.key == .return {
+            if event.isSpace || event.isReturn {
                 viewModel.activate()
-                return .handled
+                return true
             }
-            if press.key == .rightArrow || press.key == KeyEquivalent("n") {
+            if event.isRightArrow || event.char == "n" {
                 viewModel.activate()
                 viewModel.skip()
-                return .handled
+                return true
             }
-            if press.key == .leftArrow || press.key == KeyEquivalent("p") {
+            if event.isLeftArrow || event.char == "p" {
                 viewModel.activate()
                 viewModel.goBack()
-                return .handled
+                return true
             }
-            if press.key == KeyEquivalent("q") {
+            if event.char == "q" {
                 viewModel.endSession()
-                return .handled
+                return true
             }
-            // Any other key: just activate
-            let chars = press.characters.lowercased()
-            if chars.count == 1, chars.first?.isLetter == true {
+            // Any letter: just activate
+            if let c = event.char, c.isLetter {
                 viewModel.activate()
-                return .handled
+                return true
             }
-            return .handled  // consume all to avoid system bonk
+            return true  // consume all
         }
 
         // Only handle remaining keys during active study
-        guard viewModel.phase == .studying else { return .handled }
+        guard viewModel.phase == .studying else { return true }
 
-        switch press.key {
         // Space: toggle reveal
-        case .space:
+        if event.isSpace {
             viewModel.toggleReveal()
-            return .handled
+            return true
+        }
 
         // Rating: 1234 number keys + jkl;
-        case KeyEquivalent("1"), KeyEquivalent("j"):
-            if viewModel.isRevealed { viewModel.rate(.again) }
-            return .handled
-        case KeyEquivalent("2"), KeyEquivalent("k"):
-            if viewModel.isRevealed { viewModel.rate(.hard) }
-            return .handled
-        case KeyEquivalent("3"), KeyEquivalent("l"):
-            if viewModel.isRevealed { viewModel.rate(.good) }
-            return .handled
-        // Easy: allowed even without reveal (quick skip for known words)
-        case KeyEquivalent("4"), KeyEquivalent(";"):
-            viewModel.rate(.easy)
-            return .handled
-
-        // Navigation: skip / go back
-        case .rightArrow, KeyEquivalent("n"):
-            viewModel.skip()
-            return .handled
-        case .leftArrow, KeyEquivalent("p"):
-            viewModel.goBack()
-            return .handled
-
-        // Replay pronunciation
-        case KeyEquivalent("r"):
-            viewModel.replayPronunciation()
-            return .handled
-
-        // End session
-        case KeyEquivalent("q"):
-            viewModel.endSession()
-            return .handled
-
-        default:
-            return .ignored
+        if let c = event.char {
+            switch c {
+            case "1", "j":
+                if viewModel.isRevealed { viewModel.rate(.again) }
+                return true
+            case "2", "k":
+                if viewModel.isRevealed { viewModel.rate(.hard) }
+                return true
+            case "3", "l":
+                if viewModel.isRevealed { viewModel.rate(.good) }
+                return true
+            case "4", ";":
+                viewModel.rate(.easy)
+                return true
+            case "r":
+                viewModel.replayPronunciation()
+                return true
+            case "q":
+                viewModel.endSession()
+                return true
+            case "n":
+                viewModel.skip()
+                return true
+            case "p":
+                viewModel.goBack()
+                return true
+            default:
+                break
+            }
         }
+
+        // Arrow keys
+        if event.isRightArrow { viewModel.skip(); return true }
+        if event.isLeftArrow { viewModel.goBack(); return true }
+
+        return true  // consume all keys to prevent system beep
     }
 
     // MARK: - Idle Content (Paused)
@@ -482,7 +455,6 @@ struct StudyView: View {
         .shadow(color: .black.opacity(0.05), radius: 8, y: 4)
         .onTapGesture {
             viewModel.toggleReveal()
-            isFocused = true
         }
     }
 

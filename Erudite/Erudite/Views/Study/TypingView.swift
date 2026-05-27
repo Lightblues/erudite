@@ -6,66 +6,39 @@ struct TypingView: View {
     @Environment(AppState.self) private var appState
     @State private var viewModel = TypingViewModel()
     @State private var showWordList = false
-    @FocusState private var isFocused: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            switch viewModel.phase {
-            case .loading:
-                ProgressView("Loading chapter...")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            case .idle:
-                idleContent
-            case .typing:
-                typingContent
-            case .chapterComplete:
-                chapterCompleteView
-            case .empty:
-                ContentUnavailableView(
-                    "No Words Available",
-                    systemImage: "character.book.closed",
-                    description: Text("Select a word book from the Today page first.")
-                )
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background {
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture { isFocused = true }
-        }
-        .focusable()
-        .focusEffectDisabled()
-        .focused($isFocused)
-        .onKeyPress(phases: .down) { press in
-            handleKeyPress(press)
-        }
-        .onAppear { isFocused = true }
-        .onChange(of: appState.selectedTab) {
-            if appState.selectedTab == .typing {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { isFocused = true }
-            } else {
-                viewModel.deactivate()
-            }
-        }
-        .onChange(of: showWordList) {
-            if !showWordList {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { isFocused = true }
-            }
-        }
-        // Auto-restore focus when lost (after popover dismiss, button clicks, etc.)
-        .onChange(of: isFocused) {
-            if !isFocused && appState.selectedTab == .typing && !showWordList {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    if !isFocused { isFocused = true }
+        ZStack {
+            VStack(spacing: 0) {
+                switch viewModel.phase {
+                case .loading:
+                    ProgressView("Loading chapter...")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .idle:
+                    idleContent
+                case .typing:
+                    typingContent
+                case .chapterComplete:
+                    chapterCompleteView
+                case .empty:
+                    ContentUnavailableView(
+                        "No Words Available",
+                        systemImage: "character.book.closed",
+                        description: Text("Select a word book from the Today page first.")
+                    )
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // Keyboard capture layer
+            KeyCaptureView(
+                onKeyDown: { event in handleKeyEvent(event) },
+                isActive: appState.selectedTab == .typing && !showWordList
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             viewModel.deactivate()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { isFocused = true }
         }
         .task {
             if let db = appState.databaseService {
@@ -372,7 +345,6 @@ struct TypingView: View {
                     Button {
                         viewModel.goToWord(at: index)
                         showWordList = false
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { isFocused = true }
                     } label: {
                         HStack {
                             Text("\(index + 1)").font(.caption).foregroundStyle(.tertiary)
@@ -517,79 +489,76 @@ struct TypingView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - Key Handling
+    // MARK: - Key Handling (via KeyCaptureView)
 
-    private func handleKeyPress(_ press: KeyPress) -> KeyPress.Result {
+    private func handleKeyEvent(_ event: KeyEvent) -> Bool {
         // Escape: deactivate (pause)
-        if press.key == .escape {
+        if event.isEscape {
             if viewModel.phase == .typing {
                 viewModel.deactivate()
             }
-            return .handled  // consume in all phases to avoid bonk
+            return true
         }
 
         // In idle: any key (letter or space) activates — but does NOT input to word
         if viewModel.phase == .idle {
-            let chars = press.characters.lowercased()
-            let isLetter = chars.count == 1 && chars.first?.isLetter == true
-            let isSpace = press.key == .space
-
-            if isLetter || isSpace {
+            if event.isSpace {
                 viewModel.activate()
-                return .handled  // consume the key, don't pass to word
+                return true
             }
-            // Allow navigation even in idle
-            if press.key == .tab { viewModel.cycleHideMode(); return .handled }
-            if press.key == .rightArrow { viewModel.skipWord(); return .handled }
-            if press.key == .leftArrow { viewModel.goBack(); return .handled }
-            return .handled  // consume all keys in idle to avoid system bonk
+            if let c = event.char, c.isLetter {
+                viewModel.activate()
+                return true
+            }
+            if event.isTab { viewModel.cycleHideMode(); return true }
+            if event.isRightArrow { viewModel.skipWord(); return true }
+            if event.isLeftArrow { viewModel.goBack(); return true }
+            return true  // consume all
         }
 
-        guard viewModel.phase == .typing else { return .handled }
+        guard viewModel.phase == .typing else { return true }
 
         // Space: toggle word card
-        if press.key == .space {
+        if event.isSpace {
             viewModel.toggleWordCard()
-            return .handled
+            return true
         }
 
         // Cmd+R: replay
-        if press.key == KeyEquivalent("r") && press.modifiers.contains(.command) {
+        if event.char == "r" && event.hasCommand {
             viewModel.replayPronunciation()
-            return .handled
+            return true
         }
 
         // Tab: cycle hide mode
-        if press.key == .tab {
+        if event.isTab {
             viewModel.cycleHideMode()
-            return .handled
+            return true
         }
 
         // Arrows
-        if press.key == .leftArrow { viewModel.goBack(); return .handled }
-        if press.key == .rightArrow { viewModel.skipWord(); return .handled }
+        if event.isLeftArrow { viewModel.goBack(); return true }
+        if event.isRightArrow { viewModel.skipWord(); return true }
 
         // Return: advance if complete
-        if press.key == .return {
+        if event.isReturn {
             if viewModel.isWordComplete { viewModel.skipWord() }
-            return .handled
+            return true
         }
 
         // Letter input
         if !viewModel.showWordCard {
-            let chars = press.characters.lowercased()
+            let chars = event.characters.lowercased()
             if chars.count == 1, let char = chars.first, char.isLetter {
                 viewModel.handleKeystroke(char)
-                return .handled
+                return true
             }
-            if press.characters == "-" || press.characters == " " {
-                if let char = press.characters.first {
-                    viewModel.handleKeystroke(char)
-                    return .handled
-                }
+            if event.characters == "-" {
+                viewModel.handleKeystroke(Character("-"))
+                return true
             }
         }
 
-        return .ignored
+        return true  // consume all
     }
 }

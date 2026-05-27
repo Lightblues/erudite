@@ -63,3 +63,46 @@ UI:
 - 标记单词: 已经有了
 - 反转单词: 目前确实该能力
 另一个 bug: 我发现 flashcard 页面可能会出现重复的单词! 例如在我上一个 list 中出现了两次 membrane
+
+
+## rewrite with `KeyCaptureView`
+还有有 bug. 我复现的一个流程是: 在单词详情页 esc, 然后任意键进入后, 所有的按键似乎又都无效了
+- 梳理一下, 为什么反复出问题?
+- 可以有一个简单的模型来处理按键响应吗? 简化一下问题! (swift/其他桌面 app 有什么最佳实践)
+```sh
+# 根本性重构：从 @FocusState 迁移到 NSViewRepresentable
+
+为什么之前反复出问题？
+┌──────────────────────────────────────┬────────────────────────────────────────────────────────────────┐
+│ SwiftUI 的 @FocusState + .onKeyPress │                              问题                              │
+├──────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+│ Popover 创建新窗口                   │ macOS 把 firstResponder 给了 popover 的 NSWindow，关闭后不恢复 │
+├──────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+│ Button 点击                          │ 内部的 NSView-backed 控件抢占了 firstResponder                 │
+├──────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+│ 用 timer hack 补救                   │ 与 SwiftUI 的 layout pass 竞态，不确定性                       │
+└──────────────────────────────────────┴────────────────────────────────────────────────────────────────┘
+
+新方案：KeyCaptureView (NSViewRepresentable)
+┌─ ZStack ──────────────────────────────┐
+│  ┌─ UI Layer (SwiftUI Views) ─────┐   │
+│  │  cards, buttons, popovers...   │   │
+│  └────────────────────────────────┘   │
+│  ┌─ KeyCaptureView (NSView) ─────┐   │
+│  │  • acceptsFirstResponder = true│   │
+│  │  • resignFirstResponder → 自动 │   │
+│  │    重新抢回 (1 runloop cycle)  │   │
+│  │  • windowDidBecomeKey → 抢回   │   │
+│  │  • keyDown → 转发给 SwiftUI   │   │
+│  └────────────────────────────────┘   │
+└───────────────────────────────────────┘
+
+# 核心机制：
+- resignFirstResponder() 被调用时（button/popover 抢焦点），在下一个 runloop cycle 自动重新 makeFirstResponder(self)
+- 例外：如果新的 responder 是 NSTextView（文本输入框），则让步
+- windowDidBecomeKey 通知 → popover 关闭后立即恢复
+- 所有 timer hack、onChange(of: isFocused) 等补丁全部移除
+```
+KeyCaptureView 的作用是什么?
+
+
