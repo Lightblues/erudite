@@ -203,8 +203,110 @@ chapterComplete (统计页: 正确率/WPM/错误词列表)
 | Tab | Cycle hide mode |
 | ← | Go back to previous word |
 | → | Skip current word |
-| Esc | Pause (→ idle) or exit |
+| Esc | Pause (→ idle) |
 | Return | Advance (after word complete) |
+
+---
+
+## 3e. Interactive Dictionary (交互式词典)
+
+**When:** Anywhere English text appears — definitions, examples, mnemonics, synonyms.
+
+**Philosophy:** Vocabulary learning is recursive. You encounter unfamiliar words *within* definitions. Instead of switching to an external dictionary, click any word for instant lookup.
+
+**Architecture:**
+- `InteractiveText` view — tokenizes text, renders each word clickable (with underline hint)
+- `WordLookupService` — case-insensitive DB lookup + in-memory cache
+- `WordPopoverView` — compact word card shown in `.popover(item:)`
+- Fallback: Eudic URL scheme (`eudic://dict/{word}`) for words not in local DB
+- Multi-layer: popover contents are also interactive (click words within definitions)
+
+**Common Word Filter:**
+- ~120 basic function words (articles, pronouns, prepositions, basic verbs) are NOT clickable
+- Words ≤ 2 characters are skipped
+- Only words that "look like vocabulary" get the underline + tap interaction
+
+**Applied to:**
+- StudyView: English definitions, example sentences, mnemonics
+- TypingView: word card definitions
+- WordDetailView: definitions, examples, mnemonics, synonyms
+
+**Popover Content:**
+```
+┌──────────────────────────────────┐
+│ erratic  /ɪ'rætɪk/          ✕   │
+│──────────────────────────────────│
+│ adj 无规律的，不稳定的；古怪的      │
+│     something that does not      │
+│     follow any pattern or plan   │
+│                                  │
+│ " His breathing was becoming     │
+│   erratic.                       │
+│                                  │
+│ 💡 err(出错) + atic → 性格出错    │
+│                                  │
+│ 🔗 unstable odd volatile         │
+└──────────────────────────────────┘
+```
+
+---
+
+## 3f. Keyboard Focus System (KeyCaptureView)
+
+**Problem:** SwiftUI's `@FocusState` + `.onKeyPress` is unreliable on macOS. Popovers, buttons, and phase transitions steal `firstResponder` and don't return it.
+
+**Solution:** `KeyCaptureView` (NSViewRepresentable) — a transparent NSView that:
+1. `acceptsFirstResponder = true` — always accepts keyboard
+2. `resignFirstResponder()` → re-grabs after 1 runloop cycle (unless NSTextView needs it)
+3. `windowDidBecomeKey` → re-grabs after popover dismiss
+4. `hitTest → nil` → mouse events pass through to SwiftUI
+5. `keyDown` never calls `super` → prevents system beep
+
+Used by: StudyView, TypingView (any keyboard-driven view).
+
+---
+
+## 3g. Flashcard Mode (Current Implementation)
+
+**State Machine:**
+```
+loading → studying ⇄ idle (Esc pauses, Space resumes) → complete
+```
+
+**Header Bar:**
+- Progress: "X done · Y left" + card state badge (New/Learning/Review)
+- Accent picker (US/UK, shared with Typing)
+- Loop Audio toggle (3s interval, shared with Typing)
+
+**Navigation Preview (between card and rating buttons):**
+```
+← previous_word    [Word List]    next_word →
+```
+
+**Keyboard Shortcuts:**
+| Key | Action |
+|-----|--------|
+| Space | Toggle reveal (show/hide definitions) |
+| 1 / j | Rate: Again (only if revealed) |
+| 2 / k | Rate: Hard (only if revealed) |
+| 3 / l | Rate: Good (only if revealed) |
+| 4 / ; | Rate: Easy (works even without reveal — quick skip) |
+| ← / p | Go back to previous word |
+| → / n | Skip to next word |
+| r | Replay pronunciation |
+| q | End session |
+| Esc | Pause → idle |
+
+**Mouse Operations:**
+- Click card → toggle reveal
+- Click rating buttons → rate and advance
+- Click ← / → in navigation → go back / skip
+- Click Word List → popover with full queue
+
+**Session Complete Page:**
+- Stats: Cards studied / Duration / Again count
+- Full word list with rating color (Again=red, Hard=orange, Good=green, Easy=blue)
+- "Study More" button to start new session
 
 ---
 

@@ -135,3 +135,4 @@ KeyCaptureView 做了什么
 修改之后, 预期功能正常了, 但发现一个新的 bug: 之前的 按键打开 word 详情的功能失效了 -- 所有的单词虽然有下划线标记, 但无法点击
 // 原因：KeyNSView 在 ZStack 最上层，虽然透明但默认仍接收鼠标点击（hitTest 返回自身），导致下面的 SwiftUI onTapGesture 全部被拦截。
 
+总结我们之前的实现, 更新 spec 集; 另外这一 feat 是不是可以新加一个 issue 文件?
