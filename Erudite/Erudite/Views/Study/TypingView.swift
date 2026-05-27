@@ -277,7 +277,9 @@ struct TypingView: View {
                     }
                     VStack(alignment: .leading, spacing: 2) {
                         if !def.chinese.isEmpty { Text(def.chinese) }
-                        if !def.english.isEmpty { Text(def.english).font(.callout).foregroundStyle(.secondary) }
+                        if !def.english.isEmpty {
+                            InteractiveText(text: def.english, font: .callout, color: .secondary)
+                        }
                     }
                 }
             }

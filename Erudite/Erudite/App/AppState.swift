@@ -28,6 +28,7 @@ final class AppState {
     }
 
     private(set) var databaseService: DatabaseService?
+    private(set) var wordLookupService: WordLookupService?
 
     func initialize() async {
         do {
@@ -35,6 +36,7 @@ final class AppState {
             try db.setupSchema()
             try await WordLoader.seedDatabaseIfNeeded(database: db)
             self.databaseService = db
+            self.wordLookupService = WordLookupService(database: db)
             self.wordCount = try db.fetchAllWords().count
             self.wordBooks = try db.fetchWordBooks()
             // Validate persisted bookId still exists

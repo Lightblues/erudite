@@ -89,9 +89,7 @@ struct WordDetailView: View {
                         Text(def.chinese)
                             .font(.body)
                         if !def.english.isEmpty {
-                            Text(def.english)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
+                            InteractiveText(text: def.english, font: .callout, color: .secondary)
                         }
                     }
                 }
@@ -112,9 +110,7 @@ struct WordDetailView: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(example.sentence)
-                            .font(.callout)
-                            .italic()
+                        InteractiveText(text: example.sentence, font: .callout, color: .secondary, italic: true)
                         Text(example.source)
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
@@ -137,8 +133,7 @@ struct WordDetailView: View {
                     Image(systemName: "lightbulb.fill")
                         .foregroundStyle(.yellow)
                         .font(.caption)
-                    Text(mnemonic)
-                        .font(.callout)
+                    InteractiveText(text: mnemonic, font: .callout, color: .primary.opacity(0.85))
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)

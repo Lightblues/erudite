@@ -183,9 +183,7 @@ struct StudyView: View {
                                 Text(def.chinese)
                                     .font(.body)
                                 if !def.english.isEmpty {
-                                    Text(def.english)
-                                        .font(.callout)
-                                        .foregroundStyle(.secondary)
+                                    InteractiveText(text: def.english, font: .callout, color: .secondary)
                                 }
                             }
                         }
@@ -193,12 +191,8 @@ struct StudyView: View {
 
                     // Example sentence
                     if let example = word.examples.first {
-                        Text(example.sentence)
-                            .font(.callout)
-                            .italic()
-                            .foregroundStyle(.secondary)
+                        InteractiveText(text: example.sentence, font: .callout, color: .secondary, italic: true)
                             .padding(.top, 4)
-                            .lineLimit(3)
                     }
 
                     // Mnemonic
@@ -207,9 +201,7 @@ struct StudyView: View {
                             Image(systemName: "lightbulb.fill")
                                 .foregroundStyle(.yellow)
                                 .font(.caption)
-                            Text(mnemonic)
-                                .font(.callout)
-                                .foregroundStyle(.primary.opacity(0.8))
+                            InteractiveText(text: mnemonic, font: .callout, color: .primary.opacity(0.8))
                         }
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
