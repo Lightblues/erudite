@@ -114,6 +114,21 @@ nonisolated(unsafe) final class DatabaseService: Sendable {
             try db.create(index: "idx_log_time", on: "reviewLog", columns: ["timestamp"], ifNotExists: true)
             try db.create(index: "idx_log_card", on: "reviewLog", columns: ["cardId"], ifNotExists: true)
             try db.create(index: "idx_ai_cache", on: "aiCache", columns: ["wordId", "contentType"], ifNotExists: true)
+
+            // Typing practice log
+            try db.create(table: "typingLog", ifNotExists: true) { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("wordId", .text).notNull()
+                    .references("word", onDelete: .cascade)
+                t.column("bookId", .text)
+                    .references("wordList", onDelete: .setNull)
+                t.column("mistakes", .integer).notNull().defaults(to: 0)
+                t.column("duration", .double)  // seconds to complete
+                t.column("mode", .text).notNull().defaults(to: "typing")
+                t.column("timestamp", .datetime).notNull()
+            }
+            try db.create(index: "idx_typing_word", on: "typingLog", columns: ["wordId"], ifNotExists: true)
+            try db.create(index: "idx_typing_time", on: "typingLog", columns: ["timestamp"], ifNotExists: true)
         }
     }
 
@@ -166,6 +181,31 @@ nonisolated(unsafe) final class DatabaseService: Sendable {
                 guard let data = row["data"] as? Data else { return nil }
                 return try? decoder.decode(Word.self, from: data)
             }
+        }
+    }
+
+    func fetchWordsPage(inBook bookId: String, offset: Int, limit: Int) throws -> [Word] {
+        let decoder = JSONDecoder()
+        return try dbQueue.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT w.data FROM word w
+                JOIN wordListEntry wle ON wle.wordId = w.id
+                WHERE wle.listId = ?
+                ORDER BY wle.sortOrder
+                LIMIT ? OFFSET ?
+                """, arguments: [bookId, limit, offset])
+            return rows.compactMap { row in
+                guard let data = row["data"] as? Data else { return nil }
+                return try? decoder.decode(Word.self, from: data)
+            }
+        }
+    }
+
+    func fetchWordCount(inBook bookId: String) throws -> Int {
+        try dbQueue.read { db in
+            try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM wordListEntry WHERE listId = ?
+                """, arguments: [bookId]) ?? 0
         }
     }
 
@@ -468,6 +508,20 @@ nonisolated(unsafe) final class DatabaseService: Sendable {
                     arguments: [bookId, wordId, index]
                 )
             }
+        }
+    }
+
+    // MARK: - Typing Log
+
+    func insertTypingLog(wordId: String, bookId: String?, mistakes: Int, duration: TimeInterval?, mode: String) throws {
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO typingLog (wordId, bookId, mistakes, duration, mode, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                arguments: [wordId, bookId, mistakes, duration, mode, Date()]
+            )
         }
     }
 

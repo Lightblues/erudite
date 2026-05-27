@@ -44,8 +44,8 @@ struct TodayView: View {
                 ActionButton(title: "Review Due", icon: "arrow.clockwise", color: .green) {
                     appState.startStudy(mode: .reviewOnly)
                 }
-                ActionButton(title: "New Words", icon: "plus.circle", color: .orange) {
-                    appState.startStudy(mode: .newOnly)
+                ActionButton(title: "Type Practice", icon: "keyboard", color: .indigo) {
+                    appState.selectedTab = .typing
                 }
             }
 

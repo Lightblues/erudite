@@ -8,6 +8,10 @@ struct StudyView: View {
     @FocusState private var isFocused: Bool
 
     var body: some View {
+        flashcardContent
+    }
+
+    private var flashcardContent: some View {
         Group {
             switch viewModel.phase {
             case .loading:
@@ -23,6 +27,7 @@ struct StudyView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
         .focusable()
+        .focusEffectDisabled()
         .focused($isFocused)
         .onKeyPress { press in
             handleKeyPress(press)
@@ -40,7 +45,7 @@ struct StudyView: View {
         }
         .onChange(of: appState.selectedTab) {
             // Re-focus when switching back to study tab
-            if appState.selectedTab == .study {
+            if appState.selectedTab == .flashcard {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     isFocused = true
                 }
