@@ -1098,10 +1098,12 @@ Build Configuration 之后, 下次按 "Run" 按钮运行的是 debug/release?
 [todo]
 - ai: 
   - [ ] chatbot sidebar; daily review
-- [x] FSRS: 基础实现, 后续待优化
+- FSRS: 基础实现, 后续待优化
 - feat: 
   - [ ] feat: dictionary
-  - [ ] qwerty-learner
+  - [ ] feat: 任意单词查询
+  - [ ] feat: 用户 mark 功能
+  - [x] qwerty-learner 形式的 typing 练习
 - basic
   - [x] 安装到本机 -- 直接 build release
   - [x] vocabulary?
@@ -1109,7 +1111,9 @@ Build Configuration 之后, 下次按 "Run" 按钮运行的是 debug/release?
   - [ ] github action
 - view
   - [x] stats 页面
-
+- thoughts
+  - 只记忆单词的效果有限, 肯定要结合时文/试题阅读 -- 包括 typing (也可以做拼写速度比赛?)
+  - AI pet: 陪伴学习
 
 [notes]
 - macos 开发工具链
@@ -1144,8 +1148,9 @@ Build Configuration 之后, 下次按 "Run" 按钮运行的是 debug/release?
   - view: stats (dashboard)
 - typing (对标 qwerty-learner)
   - feat: 循环读音; 切换英音/美音
+  - feat: 支持顺序/乱序
   - feat: 实时输入统计: WPM, 输入/正确数
-  - feat: 隐藏元音/辅音/全部字符
+  - feat: 隐藏元音/辅音/全部/部分字符
   - feat: 章节小结
-  - feat: 键入错误回退
+  - feat: 键入错误回退/输入无效
   - feat: 激活/退出 typing 状态

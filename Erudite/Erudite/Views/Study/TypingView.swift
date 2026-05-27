@@ -136,37 +136,62 @@ struct TypingView: View {
 
             Spacer()
 
-            // Settings: hide mode
-            Picker("", selection: Binding(
-                get: { viewModel.hideMode },
-                set: { viewModel.hideMode = $0 }
-            )) {
-                ForEach(TypingViewModel.HideMode.allCases, id: \.self) { mode in
-                    Label(mode.label, systemImage: mode.icon).tag(mode)
+            // Settings row
+            HStack(spacing: 10) {
+                // Accent
+                Picker("Accent", selection: Binding(
+                    get: { viewModel.accent },
+                    set: { viewModel.accent = $0 }
+                )) {
+                    ForEach(TypingViewModel.Accent.allCases, id: \.self) { a in
+                        Text(a.label).tag(a)
+                    }
                 }
-            }
-            .frame(maxWidth: 140)
+                .frame(maxWidth: 70)
 
-            // Settings: error mode
-            Picker("", selection: Binding(
-                get: { viewModel.errorMode },
-                set: { viewModel.errorMode = $0 }
-            )) {
-                ForEach(TypingViewModel.ErrorMode.allCases, id: \.self) { mode in
-                    Text(mode.label).tag(mode)
+                // Hide mode
+                Picker("Display", selection: Binding(
+                    get: { viewModel.hideMode },
+                    set: { viewModel.hideMode = $0 }
+                )) {
+                    ForEach(TypingViewModel.HideMode.allCases, id: \.self) { mode in
+                        Text(mode.label).tag(mode)
+                    }
                 }
-            }
-            .frame(maxWidth: 110)
+                .frame(maxWidth: 130)
 
-            // Loop pronunciation toggle
-            Button {
-                viewModel.toggleLoopPronunciation()
-            } label: {
-                Image(systemName: viewModel.loopPronunciation ? "repeat.circle.fill" : "repeat.circle")
+                // Error mode
+                Picker("On Error", selection: Binding(
+                    get: { viewModel.errorMode },
+                    set: { viewModel.errorMode = $0 }
+                )) {
+                    ForEach(TypingViewModel.ErrorMode.allCases, id: \.self) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .frame(maxWidth: 110)
+
+                // Word order
+                Picker("Order", selection: Binding(
+                    get: { viewModel.wordOrder },
+                    set: { viewModel.wordOrder = $0 }
+                )) {
+                    ForEach(TypingViewModel.WordOrder.allCases, id: \.self) { order in
+                        Text(order.label).tag(order)
+                    }
+                }
+                .frame(maxWidth: 110)
+
+                // Loop pronunciation
+                Toggle(isOn: Binding(
+                    get: { viewModel.loopPronunciation },
+                    set: { _ in viewModel.toggleLoopPronunciation() }
+                )) {
+                    Text("Loop")
+                        .font(.caption)
+                }
+                .toggleStyle(.checkbox)
             }
-            .buttonStyle(.borderless)
-            .foregroundStyle(viewModel.loopPronunciation ? .blue : .secondary)
-            .help("Loop pronunciation")
 
             Spacer()
 
@@ -273,13 +298,13 @@ struct TypingView: View {
     private func letterSlot(letter: Character, index: Int) -> some View {
         let state = index < viewModel.letterStates.count ? viewModel.letterStates[index] : .untyped
         let isCursor = index == viewModel.cursorPosition && !viewModel.isWordComplete
+        let hidden = viewModel.shouldHideLetter(at: index, char: letter)
 
         let displayChar: String = {
             switch state {
             case .correct: return String(letter)
             case .wrong: return String(letter)
-            case .untyped:
-                return viewModel.hideMode.shouldHide(letter) ? "_" : String(letter)
+            case .untyped: return hidden ? "_" : String(letter)
             }
         }()
 
@@ -287,8 +312,7 @@ struct TypingView: View {
             switch state {
             case .correct: return .green
             case .wrong: return .red
-            case .untyped:
-                return viewModel.hideMode.shouldHide(letter) ? .secondary : .primary.opacity(0.4)
+            case .untyped: return hidden ? .secondary : .primary.opacity(0.4)
             }
         }()
 

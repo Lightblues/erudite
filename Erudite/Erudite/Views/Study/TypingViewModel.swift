@@ -27,6 +27,7 @@ final class TypingViewModel {
         case none       // show all letters
         case vowels     // hide vowels
         case consonants // hide consonants
+        case random     // random 40% hidden
         case all        // hide all (full dictation)
 
         var label: String {
@@ -34,6 +35,7 @@ final class TypingViewModel {
             case .none: "Show All"
             case .vowels: "Hide Vowels"
             case .consonants: "Hide Consonants"
+            case .random: "Random Hide"
             case .all: "Hide All"
             }
         }
@@ -43,29 +45,44 @@ final class TypingViewModel {
             case .none: "eye"
             case .vowels: "eye.trianglebadge.exclamationmark"
             case .consonants: "eye.slash.circle"
+            case .random: "dice"
             case .all: "eye.slash"
-            }
-        }
-
-        func shouldHide(_ char: Character) -> Bool {
-            let vowels: Set<Character> = ["a", "e", "i", "o", "u"]
-            switch self {
-            case .none: return false
-            case .vowels: return vowels.contains(Character(char.lowercased()))
-            case .consonants: return char.isLetter && !vowels.contains(Character(char.lowercased()))
-            case .all: return true
             }
         }
     }
 
     enum ErrorMode: String, CaseIterable {
-        case retryChar  // retry current character
-        case resetWord  // reset entire word
+        case retryChar
+        case resetWord
 
         var label: String {
             switch self {
             case .retryChar: "Retry Char"
             case .resetWord: "Reset Word"
+            }
+        }
+    }
+
+    enum WordOrder: String, CaseIterable {
+        case sequential
+        case shuffle
+
+        var label: String {
+            switch self {
+            case .sequential: "Sequential"
+            case .shuffle: "Shuffle"
+            }
+        }
+    }
+
+    enum Accent: String, CaseIterable {
+        case us
+        case uk
+
+        var label: String {
+            switch self {
+            case .us: "US"
+            case .uk: "UK"
             }
         }
     }
@@ -81,6 +98,18 @@ final class TypingViewModel {
     var loopPronunciation: Bool {
         didSet { UserDefaults.standard.set(loopPronunciation, forKey: "typing_loopPronunciation") }
     }
+    var wordOrder: WordOrder {
+        didSet { UserDefaults.standard.set(wordOrder.rawValue, forKey: "typing_wordOrder") }
+    }
+    var accent: Accent {
+        didSet {
+            UserDefaults.standard.set(accent.rawValue, forKey: "typing_accent")
+            pronunciation.voice = accent == .us ? PronunciationService.Voice.us : PronunciationService.Voice.uk
+        }
+    }
+
+    // Per-word random visibility (for .random hide mode)
+    var randomLetterVisible: [Bool] = []
 
     // MARK: - Published State
 
@@ -181,6 +210,9 @@ final class TypingViewModel {
         self.hideMode = HideMode(rawValue: UserDefaults.standard.string(forKey: "typing_hideMode") ?? "") ?? .none
         self.errorMode = ErrorMode(rawValue: UserDefaults.standard.string(forKey: "typing_errorMode") ?? "") ?? .retryChar
         self.loopPronunciation = UserDefaults.standard.bool(forKey: "typing_loopPronunciation")
+        self.wordOrder = WordOrder(rawValue: UserDefaults.standard.string(forKey: "typing_wordOrder") ?? "") ?? .sequential
+        self.accent = Accent(rawValue: UserDefaults.standard.string(forKey: "typing_accent") ?? "") ?? .us
+        self.pronunciation.voice = accent == .us ? PronunciationService.Voice.us : PronunciationService.Voice.uk
     }
 
     // MARK: - Public API
@@ -191,6 +223,7 @@ final class TypingViewModel {
 
         let savedChapter = UserDefaults.standard.integer(forKey: progressKey)
         self.chapterIndex = savedChapter
+        self.pronunciation.voice = accent == .us ? PronunciationService.Voice.us : PronunciationService.Voice.uk
 
         loadChapter()
     }
@@ -352,6 +385,11 @@ final class TypingViewModel {
             let offset = chapterIndex * chapterSize
             words = try db.fetchWordsPage(inBook: bookId, offset: offset, limit: chapterSize)
 
+            // Shuffle if needed
+            if wordOrder == .shuffle {
+                words.shuffle()
+            }
+
             if words.isEmpty {
                 phase = .empty
             } else {
@@ -382,6 +420,20 @@ final class TypingViewModel {
         wordMistakes = 0
         showWordCard = false
         wordStartTime = phase == .typing ? Date() : nil
+        // Generate random visibility for .random hide mode (40% chance hidden)
+        randomLetterVisible = spelling.map { _ in Double.random(in: 0...1) > 0.4 }
+    }
+
+    /// Check if a letter at given index should be hidden based on current hide mode
+    func shouldHideLetter(at index: Int, char: Character) -> Bool {
+        let vowels: Set<Character> = ["a", "e", "i", "o", "u"]
+        switch hideMode {
+        case .none: return false
+        case .vowels: return vowels.contains(Character(char.lowercased()))
+        case .consonants: return char.isLetter && !vowels.contains(Character(char.lowercased()))
+        case .random: return index < randomLetterVisible.count && !randomLetterVisible[index]
+        case .all: return true
+        }
     }
 
     private func wordComplete() {
