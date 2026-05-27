@@ -1,6 +1,5 @@
 import Foundation
 import AppKit
-import AudioToolbox
 import Observation
 
 // MARK: - Typing Practice ViewModel
@@ -160,31 +159,15 @@ final class TypingViewModel {
     private let pronunciation = PronunciationService()
     private var loopTimer: Timer?
 
-    // Sound effects (SystemSoundID for immediate playback)
-    private var correctSoundID: SystemSoundID = 0
-    private var wrongSoundID: SystemSoundID = 0
-    private var completeSoundID: SystemSoundID = 0
-
-    private func loadSounds() {
-        // Load system sounds by file path (guaranteed to exist on macOS)
-        let tinkURL = URL(fileURLWithPath: "/System/Library/Sounds/Tink.aiff")
-        AudioServicesCreateSystemSoundID(tinkURL as CFURL, &correctSoundID)
-
-        let bassoURL = URL(fileURLWithPath: "/System/Library/Sounds/Basso.aiff")
-        AudioServicesCreateSystemSoundID(bassoURL as CFURL, &wrongSoundID)
-
-        let glassURL = URL(fileURLWithPath: "/System/Library/Sounds/Glass.aiff")
-        AudioServicesCreateSystemSoundID(glassURL as CFURL, &completeSoundID)
-    }
-
+    // Sound effects: use NSSound(named:) inline — sandbox-safe
     private func playCorrect() {
-        if correctSoundID != 0 { AudioServicesPlaySystemSound(correctSoundID) }
+        NSSound(named: "Tink")?.play()
     }
     private func playWrong() {
-        if wrongSoundID != 0 { AudioServicesPlaySystemSound(wrongSoundID) }
+        NSSound(named: "Basso")?.play()
     }
     private func playComplete() {
-        if completeSoundID != 0 { AudioServicesPlaySystemSound(completeSoundID) }
+        NSSound(named: "Glass")?.play()
     }
 
     // MARK: - Progress persistence key
@@ -198,7 +181,6 @@ final class TypingViewModel {
         self.hideMode = HideMode(rawValue: UserDefaults.standard.string(forKey: "typing_hideMode") ?? "") ?? .none
         self.errorMode = ErrorMode(rawValue: UserDefaults.standard.string(forKey: "typing_errorMode") ?? "") ?? .retryChar
         self.loopPronunciation = UserDefaults.standard.bool(forKey: "typing_loopPronunciation")
-        loadSounds()
     }
 
     // MARK: - Public API
