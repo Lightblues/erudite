@@ -187,11 +187,8 @@ final class StudyViewModel {
         }
     }
 
-    /// Skip current card without rating (push to end of queue)
+    /// Skip current card without rating (just move to next, don't re-queue)
     func skip() {
-        guard let card = currentCard else { return }
-        // Put it back at the end so it comes up again later
-        cardQueue.append(card)
         advanceToNext()
     }
 
@@ -278,6 +275,14 @@ final class StudyViewModel {
                 cards = try db.fetchDueCards(inBook: bookId)
             case .newOnly:
                 cards = try db.fetchNewCards(limit: 20, inBook: bookId)
+            }
+
+            // Deduplicate by wordId (keep first occurrence)
+            var seenWordIds: Set<String> = []
+            cards = cards.filter { card in
+                if seenWordIds.contains(card.wordId) { return false }
+                seenWordIds.insert(card.wordId)
+                return true
             }
 
             guard !cards.isEmpty else {

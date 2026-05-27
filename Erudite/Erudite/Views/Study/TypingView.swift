@@ -29,8 +29,11 @@ struct TypingView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .contentShape(Rectangle())  // Make entire area clickable for focus
-        .onTapGesture { isFocused = true }  // Restore focus on click
+        .background {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { isFocused = true }
+        }
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
@@ -48,6 +51,14 @@ struct TypingView: View {
         .onChange(of: showWordList) {
             if !showWordList {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { isFocused = true }
+            }
+        }
+        // Auto-restore focus when lost (after popover dismiss, button clicks, etc.)
+        .onChange(of: isFocused) {
+            if !isFocused && appState.selectedTab == .typing && !showWordList {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    if !isFocused { isFocused = true }
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in

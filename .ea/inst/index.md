@@ -531,6 +531,10 @@ FSRS 算法逻辑是怎样的? 1/2/3/4 (again/hard/good/easy) 代表什么意思
     - 词义数据: 
     - 词书 (list) 数据源: #qwerty-learner
   - view: stats (dashboard)
+- flashcard | FSRS -- 核心 UI 组件可和 typing 共享
+  - feat: 核心的翻看单词-标记 again/hard/good/easy 模式
+  - feat: 快捷键/键盘操作
+  - [ ] 单词排序逻辑?
 - typing (对标 qwerty-learner)
   - feat: 循环读音; 切换英音/美音
   - feat: 支持顺序/乱序

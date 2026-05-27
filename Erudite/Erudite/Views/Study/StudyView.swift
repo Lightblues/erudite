@@ -29,8 +29,12 @@ struct StudyView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
-        .contentShape(Rectangle())  // Make entire area clickable for focus
-        .onTapGesture { isFocused = true }  // Restore focus on click
+        .background {
+            // Invisible tap target behind everything — restores focus when clicking empty space
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { isFocused = true }
+        }
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
@@ -55,6 +59,14 @@ struct StudyView: View {
         .onChange(of: showWordList) {
             if !showWordList {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { isFocused = true }
+            }
+        }
+        // Auto-restore focus when it's lost (e.g., after button clicks, popover dismiss)
+        .onChange(of: isFocused) {
+            if !isFocused && appState.selectedTab == .flashcard && !showWordList {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    if !isFocused { isFocused = true }
+                }
             }
         }
     }
@@ -468,6 +480,10 @@ struct StudyView: View {
         .frame(maxWidth: 500)
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.05), radius: 8, y: 4)
+        .onTapGesture {
+            viewModel.toggleReveal()
+            isFocused = true
+        }
     }
 
     // MARK: - Reveal Hint
