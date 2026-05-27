@@ -263,37 +263,12 @@ struct TypingView: View {
     // MARK: - Full Word Card
 
     private func wordCardView(word: Word) -> some View {
-        VStack(spacing: 16) {
-            Text(word.spelling)
-                .font(.system(size: 36, weight: .bold, design: .serif))
-            if let phonetic = word.phonetic {
-                Text(phonetic).font(.title3).foregroundStyle(.secondary)
-            }
-            Divider().frame(maxWidth: 300)
-            ForEach(Array(word.definitions.enumerated()), id: \.offset) { _, def in
-                HStack(spacing: 8) {
-                    if !def.partOfSpeech.isEmpty {
-                        Text(def.partOfSpeech).font(.callout).fontWeight(.semibold).foregroundStyle(.blue)
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        if !def.chinese.isEmpty { Text(def.chinese) }
-                        if !def.english.isEmpty {
-                            InteractiveText(text: def.english, font: .callout, color: .secondary)
-                        }
-                    }
-                }
-            }
-            if !word.synonymGroups.isEmpty {
-                HStack {
-                    Text("Syn:").font(.caption).foregroundStyle(.secondary)
-                    Text(word.synonymGroups.flatMap { $0 }.prefix(5).joined(separator: ", "))
-                        .font(.caption).foregroundStyle(.green)
-                }
-            }
-            Text("Press Space to dismiss").font(.caption2).foregroundStyle(.tertiary).padding(.top, 8)
+        ScrollView(.vertical, showsIndicators: false) {
+            WordPopoverView(word: word, onDismiss: {
+                viewModel.toggleWordCard()
+            })
         }
-        .padding(24)
-        .frame(maxWidth: 500)
+        .frame(maxWidth: 500, maxHeight: 400)
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
     }
 

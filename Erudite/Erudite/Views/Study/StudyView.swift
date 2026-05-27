@@ -5,6 +5,7 @@ import SwiftUI
 struct StudyView: View {
     @Environment(AppState.self) private var appState
     @State private var viewModel = StudyViewModel()
+    @State private var showWordList = false
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -16,6 +17,8 @@ struct StudyView: View {
             switch viewModel.phase {
             case .loading:
                 ProgressView("Loading cards...")
+            case .idle:
+                idleContent
             case .empty:
                 emptyState
             case .studying:
@@ -38,17 +41,18 @@ struct StudyView: View {
             }
         }
         .onAppear {
-            // Auto-focus so keyboard shortcuts work immediately
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 isFocused = true
             }
         }
         .onChange(of: appState.selectedTab) {
-            // Re-focus when switching back to study tab
             if appState.selectedTab == .flashcard {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    isFocused = true
-                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { isFocused = true }
+            }
+        }
+        .onChange(of: showWordList) {
+            if !showWordList {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { isFocused = true }
             }
         }
     }
@@ -56,11 +60,43 @@ struct StudyView: View {
     // MARK: - Key Handling
 
     private func handleKeyPress(_ press: KeyPress) -> KeyPress.Result {
-        // Only handle keys during active study
+        // Escape: deactivate (pause) from studying, go home from idle
+        if press.key == .escape {
+            if viewModel.phase == .studying {
+                viewModel.deactivate()
+                return .handled
+            } else if viewModel.phase == .idle {
+                appState.selectedTab = .today
+                return .handled
+            }
+            return .ignored
+        }
+
+        // In idle: Space or rating keys resume
+        if viewModel.phase == .idle {
+            if press.key == .space {
+                viewModel.activate()
+                return .handled
+            }
+            // Allow navigation even in idle
+            if press.key == .rightArrow || press.key == KeyEquivalent("n") {
+                viewModel.activate()
+                viewModel.skip()
+                return .handled
+            }
+            if press.key == .leftArrow || press.key == KeyEquivalent("p") {
+                viewModel.activate()
+                viewModel.goBack()
+                return .handled
+            }
+            return .ignored
+        }
+
+        // Only handle remaining keys during active study
         guard viewModel.phase == .studying else { return .ignored }
 
         switch press.key {
-        // Space: reveal / hide (toggle)
+        // Space: toggle reveal
         case .space:
             viewModel.toggleReveal()
             return .handled
@@ -75,8 +111,9 @@ struct StudyView: View {
         case KeyEquivalent("3"), KeyEquivalent("l"):
             if viewModel.isRevealed { viewModel.rate(.good) }
             return .handled
+        // Easy: allowed even without reveal (quick skip for known words)
         case KeyEquivalent("4"), KeyEquivalent(";"):
-            if viewModel.isRevealed { viewModel.rate(.easy) }
+            viewModel.rate(.easy)
             return .handled
 
         // Navigation: skip / go back
@@ -93,7 +130,7 @@ struct StudyView: View {
             return .handled
 
         // End session
-        case KeyEquivalent("q"), .escape:
+        case KeyEquivalent("q"):
             viewModel.endSession()
             return .handled
 
@@ -102,12 +139,41 @@ struct StudyView: View {
         }
     }
 
+    // MARK: - Idle Content (Paused)
+
+    private var idleContent: some View {
+        VStack(spacing: 0) {
+            headerBar.padding(.horizontal).padding(.vertical, 12)
+            Divider()
+
+            Spacer()
+            VStack(spacing: 16) {
+                Image(systemName: "pause.circle")
+                    .font(.system(size: 40))
+                    .foregroundStyle(.secondary)
+                Text("Paused")
+                    .font(.title2)
+                    .fontWeight(.medium)
+                Text("Press Space to continue")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Text("\(viewModel.cardsStudied) done · \(viewModel.cardsRemaining + 1) remaining")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer()
+
+            Divider()
+            footerBar.padding(.horizontal).padding(.vertical, 8)
+        }
+    }
+
     // MARK: - Study Content
 
     private var studyContent: some View {
         VStack(spacing: 0) {
-            // Progress bar
-            progressHeader
+            headerBar.padding(.horizontal).padding(.vertical, 12)
+            Divider()
 
             Spacer()
 
@@ -123,6 +189,148 @@ struct StudyView: View {
                 ratingButtons
             } else {
                 revealHint
+            }
+        }
+    }
+
+    // MARK: - Header Bar
+
+    private var headerBar: some View {
+        HStack(spacing: 16) {
+            // Progress
+            Label("\(viewModel.cardsStudied) done", systemImage: "checkmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.green)
+
+            if let card = viewModel.currentCard {
+                Text(card.state.label)
+                    .font(.caption)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(cardStateColor(card.state).opacity(0.15), in: Capsule())
+                    .foregroundStyle(cardStateColor(card.state))
+            }
+
+            Label("\(viewModel.cardsRemaining) left", systemImage: "rectangle.stack")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Spacer()
+
+            // Accent
+            HStack(spacing: 4) {
+                Text("Accent").font(.caption).foregroundStyle(.secondary)
+                Picker("", selection: Binding(
+                    get: { viewModel.accent },
+                    set: { viewModel.accent = $0 }
+                )) {
+                    ForEach(TypingViewModel.Accent.allCases, id: \.self) { a in
+                        Text(a.label).tag(a)
+                    }
+                }
+                .fixedSize()
+            }
+
+            // Loop pronunciation
+            Toggle(isOn: Binding(
+                get: { viewModel.loopPronunciation },
+                set: { _ in viewModel.toggleLoopPronunciation() }
+            )) {
+                Text("Loop").font(.caption)
+            }
+            .toggleStyle(.checkbox)
+        }
+    }
+
+    // MARK: - Footer Bar
+
+    private var footerBar: some View {
+        HStack {
+            Button { showWordList.toggle() } label: {
+                Label("Word List", systemImage: "list.bullet").font(.caption)
+            }
+            .buttonStyle(.bordered).controlSize(.small)
+            .popover(isPresented: $showWordList) { wordListPopover }
+
+            Spacer()
+
+            HStack(spacing: 12) {
+                shortcutHint("Space", label: "Toggle")
+                shortcutHint("←→", label: "Nav")
+                shortcutHint("1-4", label: "Rate")
+                shortcutHint("Esc", label: "Pause")
+                shortcutHint("Q", label: "Quit")
+            }
+
+            Spacer()
+
+            Button { viewModel.replayPronunciation() } label: {
+                Label("Replay", systemImage: "speaker.wave.2").font(.caption)
+            }
+            .buttonStyle(.borderless)
+        }
+    }
+
+    // MARK: - Word List Popover
+
+    private var wordListPopover: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Review Queue")
+                .font(.headline)
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
+
+            Divider()
+
+            ScrollViewReader { proxy in
+                List {
+                    // Current word
+                    if let word = viewModel.currentWord, let card = viewModel.currentCard {
+                        HStack {
+                            Text("▶").font(.caption)
+                            Text(word.spelling).font(.body.monospaced()).fontWeight(.bold)
+                            Spacer()
+                            if let def = word.definitions.first {
+                                Text(def.chinese).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            Text(card.state.label).font(.caption2)
+                                .padding(.horizontal, 4).padding(.vertical, 1)
+                                .background(cardStateColor(card.state).opacity(0.15), in: Capsule())
+                                .foregroundStyle(cardStateColor(card.state))
+                        }
+                        .listRowBackground(Color.accentColor.opacity(0.1))
+                        .id("current")
+                    }
+
+                    // Queue
+                    ForEach(Array(viewModel.queueWords.enumerated()), id: \.element.word.id) { index, item in
+                        Button {
+                            viewModel.goToWord(at: index)
+                            showWordList = false
+                        } label: {
+                            HStack {
+                                Text("\(index + 1)").font(.caption).foregroundStyle(.tertiary)
+                                    .frame(width: 20, alignment: .trailing)
+                                Text(item.word.spelling).font(.body.monospaced())
+                                Spacer()
+                                if let def = item.word.definitions.first {
+                                    Text(def.chinese).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Text(item.card.state.label).font(.caption2)
+                                    .padding(.horizontal, 4).padding(.vertical, 1)
+                                    .background(cardStateColor(item.card.state).opacity(0.15), in: Capsule())
+                                    .foregroundStyle(cardStateColor(item.card.state))
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .listStyle(.plain)
+                .frame(width: 360, height: 400)
+                .onAppear {
+                    proxy.scrollTo("current", anchor: .top)
+                }
             }
         }
     }
@@ -230,9 +438,9 @@ struct StudyView: View {
                 .foregroundStyle(.secondary)
             HStack(spacing: 16) {
                 shortcutHint("Space", label: "Reveal")
+                shortcutHint("4 ;", label: "Easy→skip")
                 shortcutHint("→ n", label: "Skip")
                 shortcutHint("R", label: "Replay")
-                shortcutHint("Q", label: "Quit")
             }
         }
         .padding(.bottom, 32)
@@ -295,38 +503,6 @@ struct StudyView: View {
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
-    }
-
-    // MARK: - Progress Header
-
-    private var progressHeader: some View {
-        HStack {
-            // Cards studied
-            Label("\(viewModel.cardsStudied) done", systemImage: "checkmark.circle.fill")
-                .font(.caption)
-                .foregroundStyle(.green)
-
-            Spacer()
-
-            // Card state
-            if let card = viewModel.currentCard {
-                Text(card.state.label)
-                    .font(.caption)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(cardStateColor(card.state).opacity(0.15), in: Capsule())
-                    .foregroundStyle(cardStateColor(card.state))
-            }
-
-            Spacer()
-
-            // Remaining
-            Label("\(viewModel.cardsRemaining) left", systemImage: "rectangle.stack")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
     }
 
     // MARK: - Empty State
