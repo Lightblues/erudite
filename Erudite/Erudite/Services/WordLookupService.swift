@@ -32,23 +32,31 @@ final class WordLookupService {
 
     // MARK: - Async lookup (local DB → API → cache)
 
-    /// Look up a word: first local DB, then API if not found.
+    /// Look up a word: first local DB, then API if not found (or if upgrade needed).
     /// Results are permanently cached to the database.
     func lookupAsync(_ spelling: String) async -> LookupResult {
         let key = spelling.lowercased()
 
         // Check local DB first
         if let cached = cache[key], let word = cached {
+            // Check if we should upgrade (e.g., Free Dict → MW)
+            if api.shouldUpgrade(word) {
+                // Upgrade in background, return current for now
+                Task { await upgradeWord(word) }
+            }
             return .found(word)
         }
         if let word = try? database.fetchWord(bySpelling: spelling) {
             cache[key] = word
+            if api.shouldUpgrade(word) {
+                Task { await upgradeWord(word) }
+            }
             return .found(word)
         }
 
         // Query API
         guard let word = await api.lookup(key) else {
-            cache[key] = nil  // Mark as "not found" to avoid repeated API calls
+            cache[key] = nil
             return .notFound(spelling)
         }
 
@@ -60,6 +68,19 @@ final class WordLookupService {
         }
         cache[key] = word
         return .found(word)
+    }
+
+    /// Upgrade a cached word from a lower-priority source (e.g., Free Dict → MW)
+    private func upgradeWord(_ existing: Word) async {
+        guard let upgraded = await api.lookup(existing.spelling) else { return }
+        // Only upgrade if the new source is MW (higher quality)
+        guard upgraded.tags.contains("source:mw") else { return }
+        do {
+            try database.updateCachedWord(upgraded)
+            cache[existing.spelling.lowercased()] = upgraded
+        } catch {
+            print("[WordLookup] Failed to upgrade word: \(error)")
+        }
     }
 
     // MARK: - Eudic fallback

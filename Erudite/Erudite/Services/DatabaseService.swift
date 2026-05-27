@@ -255,6 +255,28 @@ nonisolated(unsafe) final class DatabaseService: Sendable {
         }
     }
 
+    /// Update (replace) a cached word with higher-quality data from a better source.
+    func updateCachedWord(_ word: Word) throws {
+        let encoder = JSONEncoder()
+        try dbQueue.write { db in
+            let jsonData = try encoder.encode(word)
+            try db.execute(
+                sql: """
+                    INSERT OR REPLACE INTO word (id, spelling, phonetic, sentiment, frequency, data)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                arguments: [
+                    word.id,
+                    word.spelling,
+                    word.phonetic,
+                    word.sentiment.rawValue,
+                    word.frequency.rawValue,
+                    jsonData
+                ]
+            )
+        }
+    }
+
     func fetchWords(ids: [String]) throws -> [String: Word] {
         let decoder = JSONDecoder()
         return try dbQueue.read { db in

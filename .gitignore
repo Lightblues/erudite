@@ -34,3 +34,4 @@ data/raw/
 # Secrets (never commit)
 .env
 *.key
+Config.json
