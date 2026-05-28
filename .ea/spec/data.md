@@ -2,91 +2,94 @@
 
 ## Word Database Strategy
 
-Hybrid approach: Prebuilt base + User import + AI augmentation
+Two-tier approach: **Bundled vocabulary** (pre-enriched for learning) + **Dynamic dictionary** (API-cached for reading)
 
 ```
-┌─────────────── Data Pipeline ───────────────────────┐
-│                                                      │
-│  ┌──────────┐    ┌────────────┐    ┌─────────────┐  │
-│  │ Base list │ +  │ AI enrich  │ →  │ Prebuilt DB │  │
-│  │ (skeleton)│    │ (one-time) │    │ words.json  │  │
-│  └──────────┘    └────────────┘    └──────┬──────┘  │
-│                                           │         │
-│  ┌──────────┐                    ┌────────▼───────┐ │
-│  │ User     │ ──────────────────→│  Runtime DB    │ │
-│  │ import   │                    │  (SQLite)      │ │
-│  └──────────┘                    └────────┬───────┘ │
-│                                           │         │
-│  ┌──────────────────┐            ┌────────▼───────┐ │
-│  │ AI real-time     │ ──────────→│  User layer    │ │
-│  │ augmentation     │            │  (personalized)│ │
-│  └──────────────────┘            └────────────────┘ │
-└──────────────────────────────────────────────────────┘
+┌─────────────── Architecture ───────────────────────────┐
+│                                                         │
+│  ┌─── Bundled (words.json, git-tracked) ────────────┐  │
+│  │  13K words: GRE/TOEFL/SAT word books              │  │
+│  │  Enriched: ECDICT (freq/tags) + AI (mnemonics)    │  │
+│  │  Format: one-word-per-line JSON, ~6 MB            │  │
+│  └───────────────────────────────────────────────────┘  │
+│                                                         │
+│  ┌─── Dynamic Cache (SQLite, runtime) ──────────────┐  │
+│  │  User clicks unknown word → API lookup → cache    │  │
+│  │  Priority: MW Collegiate → Free Dictionary API    │  │
+│  │  Grows over time based on user's reading          │  │
+│  └───────────────────────────────────────────────────┘  │
+│                                                         │
+│  ┌─── External (links) ─────────────────────────────┐  │
+│  │  "Open in Eudic" / "Open in Merriam-Webster"     │  │
+│  │  For full dictionary experience                    │  │
+│  └───────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Build Pipeline (scripts/)
+
+```
+data/raw/                         (git-ignored, large source files)
+├─ GRE_3.json (新东方, 6.5K)      ← Primary: richest fields
+├─ GRE_2.json (有道, 7.2K)        ← Backup
+├─ 再要你命3000.csv               ← Frequency signal
+├─ MagooshFlashcard.csv           ← Frequency signal + examples
+├─ qwerty-learner wordbooks       ← Book structure (6 books)
+└─ ECDICT (770K, MIT)             ← Phonetics + frequency + tags
+
+Pipeline steps (in order):
+1. build_worddb.py      → words.json v2 (6.5K rich words from GRE_3)
+2. build_multibook.py   → words.json v3 (13K merged) + wordbooks.json
+3. enrich_ecdict.py     → Fill phonetics, BNC/COCA frequency, exam tags
+4. enrich_ai.py         → AI batch: mnemonics, examples, synonyms/antonyms
+5. merge_ai_enrichment.py → Merge AI results back into words.json
+
+Output: Erudite/Erudite/Resources/Data/words.json (git-tracked, one-word-per-line)
+```
+
+### Enrichment Sources
+
+| Source | Coverage | Fields Provided |
+|--------|----------|-----------------|
+| GRE_3 (新东方) | 6,515 core | CN defs, EN defs, examples, synonyms, phonetics, mnemonics |
+| ECDICT (MIT) | 99% match | Phonetics (补全), BNC/COCA freq rank, Collins stars, exam tags |
+| AI (gemini-flash) | Batch, incremental | Concise CN, mnemonics (word roots), examples, synonyms, antonyms |
+| MW API (runtime) | On-demand | Authoritative EN defs, etymology, thesaurus |
+| Free Dict API (runtime) | On-demand fallback | EN defs, IPA, synonyms |
+
+### AI Enrichment Details
+
+- **Model**: gemini-3.1-flash-lite (via OpenAI-compatible API)
+- **Concurrency**: 10 parallel requests
+- **Speed**: ~2.3 words/s, full 13K in ~95 min
+- **Checkpoint**: Resumable (data/ai_enrichment_checkpoint.json)
+- **Config**: .env file (ENRICH_API_URL, ENRICH_API_KEY, ENRICH_MODEL)
+- **Quality focus**: Concise Chinese (≤10 chars), word-root mnemonics, natural examples
+
+---
+
+## Dynamic Dictionary (Runtime)
+
+When user clicks an unknown word not in bundled DB:
+
+```
+WordLookupService.lookupAsync(word)
+  ├─ [1] Local SQLite (bundled + cached) → instant
+  ├─ [2] MW Collegiate API + Thesaurus → rich English + etymology
+  ├─ [3] Free Dictionary API → fallback (no API key needed)
+  └─ [4] "Not Found" popover → "Open in Eudic" link
+```
+
+- Results cached permanently to local SQLite DB
+- Source tracked via tags: `source:mw`, `source:free_dict`
+- Lower-quality cache auto-upgrades when better source available
+- MW keys in Config.json (git-ignored); 1000 calls/day free tier
 
 ---
 
 ## Layer 1: Prebuilt Word Database
-
-### Source Word Lists
-
-| Source | Size | Use |
-|--------|------|-----|
-| Magoosh GRE Vocabulary | ~1000 | Core + Common tiers |
-| Gregmat Word List | ~1000 | Cross-reference, fill gaps |
-| Barron's 333 High-Frequency | 333 | Validate core tier selection |
-| 再要你命 3000 | ~3000 | Advanced tier supplement, Chinese definitions reference |
-
-**Target:** ~1500-2000 deduplicated words, split into:
-- Core (500): Must-know, highest frequency
-- Common (1000): Should-know, covers most TC/SE
-- Advanced (500+): Nice-to-have, diminishing returns
-
-### Build Pipeline
-
-```
-Step 1: Skeleton (word list only)
-  - Merge sources, deduplicate
-  - Assign frequency tier based on occurrence across lists
-  - Output: [spelling, frequency_tier]
-
-Step 2: Base definitions (reliable sources)
-  - Wiktionary (CC license, free to use)
-  - WordNet (Princeton, open source)
-  - Chinese definitions from public GRE prep materials
-  - Output: + [definitions, part_of_speech, phonetic]
-
-Step 3: AI enrichment (batch, one-time)
-  For each word, generate:
-  - Morpheme breakdown (prefix + root + suffix + logic)
-  - Synonym groups (GRE SE-style pairs)
-  - Sentiment classification (positive/negative/neutral)
-  - GRE-style example sentence
-  - Default mnemonic (connecting to Chinese/English associations)
-  
-  Quality control: Human spot-check 10-20% of output
-  
-Step 4: Package as words.json (bundled with app)
-```
-
-### Note on Official Materials
-
-ETS does not publish an official GRE word list. All word lists are third-party compilations from real exam recall. The app should note this and allow users to add/modify words.
-
----
-
-## Layer 2: User Import
-
-### Supported Formats
-
-| Format | Description |
-|--------|-------------|
-| Anki .apkg | Parse SQLite + media files from Anki export |
-| CSV / TSV | Flexible column mapping (user assigns which column is what) |
-| Plain text | One word per line → AI auto-fills remaining fields |
-
-### Import Behavior
-- Deduplicate against existing database
 - Missing fields marked → background AI async fill
 - User chooses: merge into existing list OR create new word list
 - Imported words get a user-defined tag for filtering

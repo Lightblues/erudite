@@ -129,7 +129,7 @@ async def enrich_one(client: AsyncOpenAI, word: dict, semaphore: asyncio.Semapho
         user_msg = build_prompt(word)
 
         try:
-            # Streaming call
+            # Streaming call (large max_tokens to accommodate thinking models like qwen3)
             stream = await client.chat.completions.create(
                 model=MODEL,
                 messages=[
@@ -138,13 +138,28 @@ async def enrich_one(client: AsyncOpenAI, word: dict, semaphore: asyncio.Semapho
                 ],
                 stream=True,
                 temperature=0.3,
-                max_tokens=600,
+                max_tokens=4000,
             )
 
             full_response = ""
             async for chunk in stream:
                 if chunk.choices and chunk.choices[0].delta.content:
                     full_response += chunk.choices[0].delta.content
+
+            # Fallback for thinking models (qwen3): if streaming yielded nothing,
+            # retry with non-streaming call
+            if not full_response.strip():
+                resp = await client.chat.completions.create(
+                    model=MODEL,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    stream=False,
+                    temperature=0.3,
+                    max_tokens=4000,
+                )
+                full_response = resp.choices[0].message.content or ""
 
             # Parse JSON
             text = full_response.strip()
