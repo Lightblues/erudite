@@ -4,7 +4,9 @@ import SwiftUI
 
 /// Fixed right-side panel containing the AI chat companion.
 struct AIChatPanel: View {
+    @Environment(AppState.self) private var appState
     @State private var viewModel: ChatViewModel
+    @State private var showSessionList = false
 
     init(runtime: AgentRuntime) {
         self._viewModel = State(initialValue: ChatViewModel(runtime: runtime))
@@ -46,24 +48,81 @@ struct AIChatPanel: View {
     // MARK: - Header
 
     private var panelHeader: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Image(systemName: "sparkles")
                 .foregroundStyle(.purple)
-            Text("AI Companion")
-                .font(.headline)
+                .font(.caption)
+
+            // Session title
+            Text(appState.sessionManager?.currentSession?.title ?? "AI Companion")
+                .font(.subheadline.weight(.medium))
+                .lineLimit(1)
+                .truncationMode(.tail)
+
             Spacer()
-            if !viewModel.isEmpty {
-                Button(action: viewModel.clearChat) {
-                    Image(systemName: "trash")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.borderless)
-                .help("Clear conversation")
+
+            // New session
+            Button {
+                createNewSession()
+            } label: {
+                Image(systemName: "plus.bubble")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("New conversation")
+
+            // Session list
+            Button {
+                showSessionList.toggle()
+            } label: {
+                Image(systemName: "list.bullet")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("Conversation history")
+            .popover(isPresented: $showSessionList) {
+                SessionListView(
+                    sessions: appState.sessionManager?.sessions ?? [],
+                    currentSessionId: appState.sessionManager?.currentSession?.id,
+                    onSelect: { switchToSession($0) },
+                    onDelete: { deleteSession($0) },
+                    onNewSession: { createNewSession() }
+                )
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    // MARK: - Session Actions
+
+    private func createNewSession() {
+        guard let sessionManager = appState.sessionManager,
+              let runtime = appState.aiRuntime else { return }
+        // Flush memory before switching
+        appState.flushMemory()
+        _ = try? sessionManager.createNewSession()
+        runtime.clearHistory()
+        appState.memoryStore?.resetWatermark()
+    }
+
+    private func switchToSession(_ id: String) {
+        guard let sessionManager = appState.sessionManager,
+              let runtime = appState.aiRuntime else { return }
+        appState.flushMemory()
+        if let messages = try? sessionManager.switchToSession(id: id) {
+            runtime.loadMessages(messages)
+        }
+        appState.memoryStore?.resetWatermark()
+        showSessionList = false
+    }
+
+    private func deleteSession(_ id: String) {
+        guard let sessionManager = appState.sessionManager else { return }
+        try? sessionManager.deleteSession(id: id)
+        sessionManager.refreshSessionList()
     }
 
     // MARK: - Empty State

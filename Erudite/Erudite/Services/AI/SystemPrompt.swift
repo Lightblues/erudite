@@ -5,7 +5,7 @@ import Foundation
 enum SystemPrompt {
 
     /// Build the complete system prompt for the AI companion.
-    static func build(currentTab: SidebarTab? = nil) -> String {
+    static func build(currentTab: SidebarTab? = nil, memoryStore: MemoryStore? = nil) -> String {
         var sections: [String] = []
 
         // Persona
@@ -24,6 +24,8 @@ enum SystemPrompt {
         - A specific word's history or performance → use `get_word_history`
         - Which words they struggle with → use `get_weak_words`
         - Their current session state → use `get_current_session`
+        - Past observations about this learner → use `recall_observations`
+        - Past conversation topics → use `search_past_conversations`
 
         NEVER fabricate or guess learning data. If a tool returns no data, say so honestly.
 
@@ -32,11 +34,17 @@ enum SystemPrompt {
         - Progress questions: use get_user_stats tool first, then comment on the data
         - "How am I doing with [word]?": use get_word_history tool, then give personalized advice
         - "What should I focus on?": use get_weak_words tool, then suggest strategy
+        - "Do you remember...?" or past context questions: use recall_observations or search_past_conversations
         - Proactively offer mnemonics and memory tricks for difficult words
         - Relate words to GRE context when relevant (common question types, nuances)
         - When comparing words: highlight the key distinction in one clear sentence
         - Use word roots (prefix + root + suffix) as primary mnemonic strategy
         """)
+
+        // Memory section (observations about the learner)
+        if let memoryStore, let memorySection = try? memoryStore.buildMemorySection(), !memorySection.isEmpty {
+            sections.append(memorySection)
+        }
 
         // Current context
         if let tab = currentTab {

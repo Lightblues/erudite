@@ -10,6 +10,7 @@ struct AppConfig: Codable {
     let aiApiKey: String
     let aiBaseURL: String?
     let aiModel: String?
+    let aiFastModel: String?
 
     /// Whether Merriam-Webster API is configured (non-empty key)
     var hasMWKeys: Bool {
@@ -39,18 +40,26 @@ struct AppConfig: Codable {
         return AnthropicModel.sonnet
     }
 
+    /// Resolved fast model (defaults to Haiku) — used for background tasks
+    var resolvedFastModel: String {
+        if let model = aiFastModel, !model.isEmpty {
+            return model
+        }
+        return AnthropicModel.haiku
+    }
+
     /// Shared singleton loaded from bundle
     static let shared: AppConfig = {
         guard let url = Bundle.main.url(forResource: "Config", withExtension: "json") else {
             print("[AppConfig] Config.json not found in bundle. Copy Config.example.json → Config.json and add your keys.")
-            return AppConfig(mwDictionaryKey: "", mwThesaurusKey: "", aiApiKey: "", aiBaseURL: nil, aiModel: nil)
+            return AppConfig(mwDictionaryKey: "", mwThesaurusKey: "", aiApiKey: "", aiBaseURL: nil, aiModel: nil, aiFastModel: nil)
         }
         do {
             let data = try Data(contentsOf: url)
             return try JSONDecoder().decode(AppConfig.self, from: data)
         } catch {
             print("[AppConfig] Failed to parse Config.json: \(error)")
-            return AppConfig(mwDictionaryKey: "", mwThesaurusKey: "", aiApiKey: "", aiBaseURL: nil, aiModel: nil)
+            return AppConfig(mwDictionaryKey: "", mwThesaurusKey: "", aiApiKey: "", aiBaseURL: nil, aiModel: nil, aiFastModel: nil)
         }
     }()
 }

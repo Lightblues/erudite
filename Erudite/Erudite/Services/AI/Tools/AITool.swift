@@ -31,6 +31,8 @@ final class ToolRegistry {
         register(GetWordHistoryTool())
         register(GetWeakWordsTool())
         register(GetCurrentSessionTool())
+        register(RecallObservationsTool())
+        register(SearchConversationsTool())
     }
 
     private func register(_ tool: any AITool) {

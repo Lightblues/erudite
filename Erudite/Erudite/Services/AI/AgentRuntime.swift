@@ -57,6 +57,15 @@ final class AgentRuntime {
 
     // MARK: - Public API
 
+    /// Callback after each complete turn (user msg + assistant response).
+    /// Used by SessionManager for persistence and MemoryStore for extraction.
+    var onTurnComplete: ((_ userMessage: ChatMessage, _ assistantMessage: ChatMessage) -> Void)?
+
+    /// Load pre-existing messages (from session restore).
+    func loadMessages(_ restoredMessages: [ChatMessage]) {
+        messages = restoredMessages
+    }
+
     /// Send a user message and run the agent loop.
     func send(userMessage: String) {
         let msg = ChatMessage(role: .user, text: userMessage)
@@ -197,6 +206,11 @@ final class AgentRuntime {
                     messages.append(assistantMsg)
                     streamingText = ""
                     phase = .idle
+
+                    // Notify for persistence + memory extraction
+                    if let lastUserMsg = messages.last(where: { $0.role == .user && !$0.isToolResult }) {
+                        onTurnComplete?(lastUserMsg, assistantMsg)
+                    }
                     return
 
                 } else {
@@ -256,7 +270,10 @@ final class AgentRuntime {
     // MARK: - Helpers
 
     private func buildRequest() -> AnthropicRequest {
-        let systemPrompt = SystemPrompt.build(currentTab: AppState.shared.selectedTab)
+        let systemPrompt = SystemPrompt.build(
+            currentTab: AppState.shared.selectedTab,
+            memoryStore: AppState.shared.memoryStore
+        )
 
         // Convert messages to API format
         let apiMessages = messages.map { $0.toAPIMessage() }
@@ -294,27 +311,41 @@ private struct PendingToolCall {
 // MARK: - Chat Message
 
 struct ChatMessage: Identifiable {
-    let id = UUID()
+    let id: UUID
     let role: MessageRole
     let text: String
     let blocks: [ContentBlock]
     let isToolResult: Bool
-    let timestamp = Date()
+    let timestamp: Date
 
     /// Simple text message
     init(role: MessageRole, text: String) {
+        self.id = UUID()
         self.role = role
         self.text = text
         self.blocks = [.text(text)]
         self.isToolResult = false
+        self.timestamp = Date()
     }
 
     /// Message with explicit content blocks (tool use / tool results)
     init(role: MessageRole, text: String, blocks: [ContentBlock], isToolResult: Bool = false) {
+        self.id = UUID()
         self.role = role
         self.text = text
         self.blocks = blocks
         self.isToolResult = isToolResult
+        self.timestamp = Date()
+    }
+
+    /// Restore from persistence (with existing id and timestamp)
+    init(id: UUID, role: MessageRole, text: String, blocks: [ContentBlock], isToolResult: Bool, timestamp: Date) {
+        self.id = id
+        self.role = role
+        self.text = text
+        self.blocks = blocks
+        self.isToolResult = isToolResult
+        self.timestamp = timestamp
     }
 
     /// Convert to API wire format
