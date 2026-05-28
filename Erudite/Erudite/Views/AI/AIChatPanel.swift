@@ -130,15 +130,11 @@ struct AIChatPanel: View {
                 .padding(.vertical, 8)
             }
             .onChange(of: viewModel.streamingText) { _, _ in
-                withAnimation(.easeOut(duration: 0.1)) {
-                    proxy.scrollTo("streaming", anchor: .bottom)
-                }
+                proxy.scrollTo("streaming", anchor: .bottom)
             }
             .onChange(of: viewModel.visibleMessages.count) { _, _ in
                 if let last = viewModel.visibleMessages.last {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(last.id, anchor: .bottom)
-                    }
+                    proxy.scrollTo(last.id, anchor: .bottom)
                 }
             }
         }

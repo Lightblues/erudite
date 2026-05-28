@@ -5,14 +5,18 @@ import SwiftUI
 /// Shows an animated indicator when the AI is executing a tool.
 struct ThinkingIndicator: View {
     let toolName: String?
-    @State private var rotation: Double = 0
+    @State private var isAnimating = false
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "gear")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .rotationEffect(.degrees(rotation))
+                .rotationEffect(.degrees(isAnimating ? 360 : 0))
+                .animation(
+                    .linear(duration: 2).repeatForever(autoreverses: false),
+                    value: isAnimating
+                )
 
             Text(displayText)
                 .font(.caption)
@@ -20,12 +24,8 @@ struct ThinkingIndicator: View {
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 4)
-        .task {
-            // Animate gear rotation
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(50))
-                rotation += 5
-            }
+        .onAppear {
+            isAnimating = true
         }
     }
 

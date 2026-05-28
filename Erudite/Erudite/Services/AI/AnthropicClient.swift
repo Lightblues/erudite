@@ -66,7 +66,12 @@ final class AnthropicClient {
         return AsyncThrowingStream { continuation in
             let task = Task {
                 var parser = SSEParser()
-                var utf8Buffer = Data()
+                // Buffer bytes and process at line boundaries.
+                // We accumulate into a string buffer and flush after each newline.
+                // This is much more efficient than byte-by-byte while still handling
+                // partial chunks correctly (unlike bytes.lines which may skip empty lines).
+                var buffer = ""
+                var byteAccumulator = Data(capacity: 4096)
 
                 do {
                     for try await byte in bytes {
@@ -75,25 +80,12 @@ final class AnthropicClient {
                             return
                         }
 
-                        utf8Buffer.append(byte)
+                        byteAccumulator.append(byte)
 
-                        // Decode when we hit a newline (SSE events are line-delimited)
+                        // Process on newline boundaries
                         if byte == UInt8(ascii: "\n") {
-                            if let chunk = String(data: utf8Buffer, encoding: .utf8) {
-                                utf8Buffer.removeAll(keepingCapacity: true)
-                                let rawEvents = parser.feed(chunk)
-                                for raw in rawEvents {
-                                    if let event = SSEEventDecoder.decode(raw) {
-                                        continuation.yield(event)
-                                    }
-                                }
-                            }
-                        }
-
-                        // Safety: flush buffer if it gets too large without newlines
-                        if utf8Buffer.count > 65536 {
-                            if let chunk = String(data: utf8Buffer, encoding: .utf8) {
-                                utf8Buffer.removeAll(keepingCapacity: true)
+                            if let chunk = String(data: byteAccumulator, encoding: .utf8) {
+                                byteAccumulator.removeAll(keepingCapacity: true)
                                 let rawEvents = parser.feed(chunk)
                                 for raw in rawEvents {
                                     if let event = SSEEventDecoder.decode(raw) {
@@ -104,9 +96,10 @@ final class AnthropicClient {
                         }
                     }
 
-                    // Stream ended — flush any remaining data
-                    if !utf8Buffer.isEmpty, let chunk = String(data: utf8Buffer, encoding: .utf8) {
-                        let rawEvents = parser.feed(chunk)
+                    // Flush remaining
+                    if !byteAccumulator.isEmpty,
+                       let chunk = String(data: byteAccumulator, encoding: .utf8) {
+                        let rawEvents = parser.feed(chunk + "\n")
                         for raw in rawEvents {
                             if let event = SSEEventDecoder.decode(raw) {
                                 continuation.yield(event)

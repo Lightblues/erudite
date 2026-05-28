@@ -124,6 +124,8 @@ final class AgentRuntime {
                 var accumulatedText = ""
                 var toolCalls: [PendingToolCall] = []
                 var currentToolCall: PendingToolCall?
+                var lastUIUpdate = ContinuousClock.now
+                let uiUpdateInterval: Duration = .milliseconds(50) // Throttle: max 20 UI updates/sec
 
                 for try await event in stream {
                     guard !Task.isCancelled else {
@@ -153,7 +155,12 @@ final class AgentRuntime {
                         switch delta {
                         case .textDelta(let text):
                             accumulatedText += text
-                            streamingText = accumulatedText
+                            // Throttle UI updates to avoid excessive re-renders
+                            let now = ContinuousClock.now
+                            if now - lastUIUpdate >= uiUpdateInterval {
+                                streamingText = accumulatedText
+                                lastUIUpdate = now
+                            }
                         case .inputJSONDelta(let partial):
                             currentToolCall?.inputJSON += partial
                         }
@@ -162,6 +169,10 @@ final class AgentRuntime {
                         if let tc = currentToolCall {
                             toolCalls.append(tc)
                             currentToolCall = nil
+                        }
+                        // Flush text on block stop (ensures final text is shown)
+                        if !accumulatedText.isEmpty {
+                            streamingText = accumulatedText
                         }
 
                     case .messageDelta(_, let usage):

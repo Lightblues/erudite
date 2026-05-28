@@ -548,3 +548,7 @@ FSRS 算法逻辑是怎样的? 1/2/3/4 (again/hard/good/easy) 代表什么意思
   - feat: 加入 "生词本"
 - pitfalls
   - 没有提示音: 可能是系统 alert volume 设置为 0!
+- feat: 实现 swift 下的 agent 体系
+  - Anthropic 服务: types (Messages API), SSE 行协议解析器 (SSEParser), http 层 (SSEParser)
+  - 核心 agent 体系: ReAct 实现 (AgentRuntime), SystemPrompt
+  - 工具层: AITool (Protocol + ToolRegistry)
