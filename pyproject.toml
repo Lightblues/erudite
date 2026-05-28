@@ -5,6 +5,7 @@ description = "Data processing & enrichment scripts for Erudite GRE vocab app"
 requires-python = ">=3.12"
 dependencies = [
     "openai>=2.38.0",
+    "python-dotenv>=1.2.2",
 ]
 
 [project.scripts]
