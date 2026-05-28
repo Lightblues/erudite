@@ -8,6 +8,8 @@ struct WordPopoverView: View {
     let word: Word
     var onDismiss: (() -> Void)?
 
+    @State private var showAllDefinitions = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Header: spelling + phonetic
@@ -34,8 +36,9 @@ struct WordPopoverView: View {
 
             Divider()
 
-            // Definitions (English part is interactive for multi-layer lookup)
-            ForEach(Array(word.definitions.enumerated()), id: \.offset) { _, def in
+            // Definitions: show first 2, expand for rest
+            let defsToShow = showAllDefinitions ? word.definitions : Array(word.definitions.prefix(2))
+            ForEach(Array(defsToShow.enumerated()), id: \.offset) { _, def in
                 HStack(alignment: .top, spacing: 8) {
                     if !def.partOfSpeech.isEmpty {
                         Text(def.partOfSpeech)
@@ -47,13 +50,27 @@ struct WordPopoverView: View {
                             .background(.orange, in: RoundedRectangle(cornerRadius: 3))
                     }
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(def.chinese)
-                            .font(.body)
+                        if !def.chinese.isEmpty {
+                            Text(def.chinese)
+                                .font(.body)
+                        }
                         if !def.english.isEmpty {
                             InteractiveText(text: def.english, font: .callout, color: .secondary)
                         }
                     }
                 }
+            }
+
+            // "Show more" if there are extra definitions
+            if word.definitions.count > 2 && !showAllDefinitions {
+                Button {
+                    showAllDefinitions = true
+                } label: {
+                    Text("Show all \(word.definitions.count) definitions")
+                        .font(.caption)
+                        .foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
             }
 
             // First example (interactive)
@@ -66,7 +83,7 @@ struct WordPopoverView: View {
                 }
             }
 
-            // Mnemonic (interactive)
+            // Mnemonic / Etymology (interactive)
             if let mnemonic = word.mnemonics.first {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "lightbulb.fill")
@@ -84,9 +101,76 @@ struct WordPopoverView: View {
                 let synonyms = word.synonymGroups.flatMap { $0 }.prefix(5)
                 SynonymChipsView(synonyms: Array(synonyms))
             }
+
+            Divider()
+
+            // Footer: external links
+            HStack(spacing: 12) {
+                Spacer()
+                Button {
+                    openMWWeb(word.spelling)
+                } label: {
+                    Label("Merriam-Webster", systemImage: "globe")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.blue)
+
+                Button {
+                    WordLookupService.openInEudic(word.spelling)
+                } label: {
+                    Label("Eudic", systemImage: "book")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.blue)
+            }
         }
         .padding(16)
         .frame(width: 360, alignment: .leading)
+    }
+
+    private func openMWWeb(_ spelling: String) {
+        let encoded = spelling.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? spelling
+        if let url = URL(string: "https://www.merriam-webster.com/dictionary/\(encoded)") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+}
+
+// MARK: - Not Found Popover
+
+/// Shown when a word is not found in local DB or API.
+struct NotFoundPopoverView: View {
+    let spelling: String
+    var onDismiss: (() -> Void)?
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Text(spelling)
+                    .font(.system(size: 18, weight: .bold, design: .serif))
+                Spacer()
+                Button { onDismiss?() } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Text("Word not found in dictionary")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            Button {
+                WordLookupService.openInEudic(spelling)
+            } label: {
+                Label("Look up in Eudic", systemImage: "book")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(16)
+        .frame(width: 280)
     }
 }
 
@@ -135,8 +219,13 @@ struct SynonymChipsView: View {
         let cleaned = spelling.lowercased()
         if let word = service.lookup(cleaned) {
             popoverWord = word
-        } else {
-            service.openInEudic(cleaned)
+            return
+        }
+        Task {
+            let result = await service.lookupAsync(cleaned)
+            if case .found(let word) = result {
+                popoverWord = word
+            }
         }
     }
 }

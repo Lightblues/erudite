@@ -4,44 +4,104 @@ import Observation
 
 // MARK: - Word Lookup Service
 
-/// Provides word lookup with in-memory caching and Eudic fallback.
+/// Provides word lookup with local DB, API fallback, and permanent caching.
 @Observable
 final class WordLookupService {
     private var cache: [String: Word?] = [:]
     private let database: DatabaseService
+    private let api = DictionaryAPIService()
 
     init(database: DatabaseService) {
         self.database = database
     }
 
-    /// Look up a word by its spelling (case-insensitive).
-    /// Returns the Word if found in the local database, nil otherwise.
+    // MARK: - Sync lookup (local DB only, instant)
+
+    /// Look up a word in local DB (instant). Returns nil if not found locally.
     func lookup(_ spelling: String) -> Word? {
         let key = spelling.lowercased()
         if let cached = cache[key] {
             return cached
         }
         let word = try? database.fetchWord(bySpelling: spelling)
-        cache[key] = word
+        if word != nil {
+            cache[key] = word
+        }
         return word
     }
 
+    // MARK: - Async lookup (local DB → API → cache)
+
+    /// Look up a word: first local DB, then API if not found (or if upgrade needed).
+    /// Results are permanently cached to the database.
+    func lookupAsync(_ spelling: String) async -> LookupResult {
+        let key = spelling.lowercased()
+
+        // Check local DB first
+        if let cached = cache[key], let word = cached {
+            // Check if we should upgrade (e.g., Free Dict → MW)
+            if api.shouldUpgrade(word) {
+                // Upgrade in background, return current for now
+                Task { await upgradeWord(word) }
+            }
+            return .found(word)
+        }
+        if let word = try? database.fetchWord(bySpelling: spelling) {
+            cache[key] = word
+            if api.shouldUpgrade(word) {
+                Task { await upgradeWord(word) }
+            }
+            return .found(word)
+        }
+
+        // Query API
+        guard let word = await api.lookup(key) else {
+            cache[key] = nil
+            return .notFound(spelling)
+        }
+
+        // Cache to DB permanently
+        do {
+            try database.insertCachedWord(word)
+        } catch {
+            print("[WordLookup] Failed to cache word: \(error)")
+        }
+        cache[key] = word
+        return .found(word)
+    }
+
+    /// Upgrade a cached word from a lower-priority source (e.g., Free Dict → MW)
+    private func upgradeWord(_ existing: Word) async {
+        guard let upgraded = await api.lookup(existing.spelling) else { return }
+        // Only upgrade if the new source is MW (higher quality)
+        guard upgraded.tags.contains("source:mw") else { return }
+        do {
+            try database.updateCachedWord(upgraded)
+            cache[existing.spelling.lowercased()] = upgraded
+        } catch {
+            print("[WordLookup] Failed to upgrade word: \(error)")
+        }
+    }
+
+    // MARK: - Eudic fallback
+
     /// Open the word in Eudic dictionary app via URL scheme.
-    func openInEudic(_ spelling: String) {
+    static func openInEudic(_ spelling: String) {
         let encoded = spelling.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? spelling
         if let url = URL(string: "eudic://dict/\(encoded)") {
             NSWorkspace.shared.open(url)
         }
     }
 
-    /// Look up a word: if found locally, return it; otherwise open Eudic.
-    /// Returns the Word if found locally, nil if fallback to Eudic.
-    @discardableResult
-    func lookupOrFallback(_ spelling: String) -> Word? {
-        if let word = lookup(spelling) {
-            return word
-        }
-        openInEudic(spelling)
-        return nil
+    /// Instance method for convenience
+    func openInEudic(_ spelling: String) {
+        Self.openInEudic(spelling)
     }
+}
+
+// MARK: - Lookup Result
+
+enum LookupResult {
+    case found(Word)
+    case notFound(String)
 }

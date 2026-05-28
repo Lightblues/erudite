@@ -29,8 +29,10 @@ __pycache__/
 
 # Data (raw sources large, re-download per data/README.md)
 data/raw/
-# Erudite/Erudite/Resources/Data/words.json
+data/ai_enriched_words.jsonl
+data/ai_enrichment_checkpoint.json
 
 # Secrets (never commit)
 .env
 *.key
+Config.json
