@@ -3,6 +3,9 @@ import Observation
 
 @Observable
 final class AppState {
+    /// Shared singleton for tool access (set by EruditeApp on launch)
+    static var shared: AppState!
+
     var selectedTab: SidebarTab = .today
     var isDBReady: Bool = false
     var wordCount: Int = 0
@@ -29,6 +32,7 @@ final class AppState {
 
     private(set) var databaseService: DatabaseService?
     private(set) var wordLookupService: WordLookupService?
+    private(set) var aiRuntime: AgentRuntime?
 
     func initialize() async {
         do {
@@ -37,6 +41,7 @@ final class AppState {
             try await WordLoader.seedDatabaseIfNeeded(database: db)
             self.databaseService = db
             self.wordLookupService = WordLookupService(database: db)
+            self.aiRuntime = AgentRuntime(client: AnthropicClient(), db: db)
             self.wordCount = try db.fetchAllWords().count
             self.wordBooks = try db.fetchWordBooks()
             // Validate persisted bookId still exists
