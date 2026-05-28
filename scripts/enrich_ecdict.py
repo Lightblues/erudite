@@ -23,6 +23,37 @@ ECDICT_PATH = "/Users/frankshi/Projects/_inbox/repo/ECDICT/ecdict.csv"
 WORDS_PATH = Path("Erudite/Erudite/Resources/Data/words.json")
 
 
+def write_words_json(path: Path, data: dict):
+    """Write words.json in one-word-per-line format (valid JSON, git-friendly)."""
+    words = data["words"]
+    # Sort alphabetically for stable diffs
+    words.sort(key=lambda w: w.get("spelling", "").lower())
+    data["word_count"] = len(words)
+
+    with open(path, "w", encoding="utf-8") as f:
+        # Write header
+        header = {k: v for k, v in data.items() if k != "words"}
+        header_json = json.dumps(header, ensure_ascii=False)
+        # Remove closing brace, we'll add "words" manually
+        f.write("{\n")
+        for k, v in header.items():
+            f.write(f'"{k}":{json.dumps(v, ensure_ascii=False)},\n')
+        f.write('"words":[\n')
+
+        # Write each word as a compact single line
+        for i, word in enumerate(words):
+            line = json.dumps(word, ensure_ascii=False, separators=(",", ":"))
+            if i < len(words) - 1:
+                f.write(line + ",\n")
+            else:
+                f.write(line + "\n")
+
+        f.write("]\n}\n")
+
+    file_size = path.stat().st_size / (1024 * 1024)
+    print(f"  Done. File size: {file_size:.1f} MB ({len(words):,} words)")
+
+
 def load_ecdict_index():
     """Load full ECDICT into a dict keyed by lowercase word."""
     print("Loading ECDICT (770K entries)...", end=" ", flush=True)
@@ -152,17 +183,13 @@ def main():
         else:
             enriched_words.append(word)
 
-    # Write back
+    # Write back (one-word-per-line format for git-friendly diffs)
     data["words"] = enriched_words
     data["enriched_with"] = "ecdict"
     data["enriched_at"] = "2026-05-28"
 
-    print(f"\nWriting {WORDS_PATH}...")
-    with open(WORDS_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
-
-    file_size = WORDS_PATH.stat().st_size / (1024 * 1024)
-    print(f"  Done. File size: {file_size:.1f} MB")
+    print(f"\nWriting {WORDS_PATH} (one-word-per-line format)...")
+    write_words_json(WORDS_PATH, data)
 
     # Report
     print("\n" + "=" * 60)
