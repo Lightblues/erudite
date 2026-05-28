@@ -44,6 +44,8 @@ final class AppState {
             try await WordLoader.seedDatabaseIfNeeded(database: db)
             self.databaseService = db
             self.wordLookupService = WordLookupService(database: db)
+            AITracer.shared.configure(db: db)
+            Log.app.info("Database initialized")
 
             // AI subsystem
             let client = AnthropicClient()

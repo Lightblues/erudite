@@ -167,6 +167,22 @@ nonisolated(unsafe) final class DatabaseService: Sendable {
             }
             try db.create(index: "idx_ai_obs_type", on: "ai_observations", columns: ["type"], ifNotExists: true)
             try db.create(index: "idx_ai_obs_confidence", on: "ai_observations", columns: ["confidence"], ifNotExists: true)
+
+            // AI API call traces (for debugging and cost analysis)
+            try db.create(table: "ai_traces", ifNotExists: true) { t in
+                t.primaryKey("id", .text)
+                t.column("timestamp", .datetime).notNull()
+                t.column("model", .text).notNull()
+                t.column("purpose", .text).notNull()
+                t.column("inputTokens", .integer).notNull().defaults(to: 0)
+                t.column("outputTokens", .integer).notNull().defaults(to: 0)
+                t.column("cacheHit", .boolean).notNull().defaults(to: false)
+                t.column("latencyMs", .integer).notNull().defaults(to: 0)
+                t.column("toolCalls", .text)
+                t.column("error", .text)
+                t.column("sessionId", .text)
+            }
+            try db.create(index: "idx_ai_traces_time", on: "ai_traces", columns: ["timestamp"], ifNotExists: true)
         }
     }
 

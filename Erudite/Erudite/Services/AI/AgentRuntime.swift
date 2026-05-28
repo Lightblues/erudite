@@ -124,6 +124,9 @@ final class AgentRuntime {
                     return
                 }
 
+                let startTime = ContinuousClock.now
+                Log.ai.info("API request: model=\(request.model), messages=\(messages.count)")
+
                 let stream = try await client.stream(
                     request: request,
                     apiKey: apiKey,
@@ -193,6 +196,7 @@ final class AgentRuntime {
                         break
 
                     case .error(let apiError):
+                        Log.ai.error("API error in stream", error: apiError)
                         phase = .error(apiError.message)
                         return
                     }
@@ -202,6 +206,19 @@ final class AgentRuntime {
 
                 if toolCalls.isEmpty {
                     // Pure text response — done
+                    let elapsed = startTime.duration(to: .now)
+                    let latencyMs = Int(elapsed.components.seconds * 1000 + elapsed.components.attoseconds / 1_000_000_000_000_000)
+                    Log.ai.info("Response complete: \(latencyMs)ms, tokens=\(totalOutputTokens)")
+                    AITracer.shared.record(
+                        model: request.model,
+                        purpose: "chat",
+                        inputTokens: totalInputTokens,
+                        outputTokens: totalOutputTokens,
+                        cacheHit: cacheHits > 0,
+                        latencyMs: latencyMs,
+                        sessionId: AppState.shared.sessionManager?.currentSession?.id
+                    )
+
                     let assistantMsg = ChatMessage(role: .assistant, text: accumulatedText)
                     messages.append(assistantMsg)
                     streamingText = ""

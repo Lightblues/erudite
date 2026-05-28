@@ -40,9 +40,13 @@ struct AppConfig: Codable {
         return AnthropicModel.sonnet
     }
 
-    /// Resolved fast model (defaults to Haiku) — used for background tasks
+    /// Resolved fast model — falls back to main model if not set, then to Haiku
     var resolvedFastModel: String {
         if let model = aiFastModel, !model.isEmpty {
+            return model
+        }
+        // Fall back to main model (user's proxy might not support haiku)
+        if let model = aiModel, !model.isEmpty {
             return model
         }
         return AnthropicModel.haiku
