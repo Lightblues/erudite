@@ -20,8 +20,10 @@ Erudite/
 ├── Erudite.xcodeproj
 ├── Erudite/
 │   ├── App/
-│   │   ├── EruditeApp.swift            # @main entry
-│   │   └── AppState.swift              # Global state
+│   │   ├── EruditeApp.swift            # @main entry + debug window
+│   │   ├── AppState.swift              # Global state + service wiring
+│   │   ├── AppConfig.swift             # Config.json loader (API keys, model config)
+│   │   └── Log.swift                   # Unified logging (os.Logger + file + debug buffer)
 │   ├── Models/
 │   │   ├── Word.swift                  # Word data model
 │   │   ├── WordRoot.swift              # Morpheme/root model
@@ -37,10 +39,29 @@ Erudite/
 │   │   ├── Scheduler.swift             # Daily plan generation
 │   │   └── StatisticsEngine.swift      # Aggregation and analysis
 │   ├── Services/
-│   │   ├── DatabaseService.swift       # GRDB wrapper
-│   │   ├── AIService.swift             # LLM API abstraction
+│   │   ├── DatabaseService.swift       # GRDB wrapper (11 tables)
+│   │   ├── AI/
+│   │   │   ├── AnthropicTypes.swift    # Messages API Codable types + JSONValue
+│   │   │   ├── SSEParser.swift         # Server-Sent Events parser
+│   │   │   ├── AnthropicClient.swift   # HTTP streaming client (dual auth)
+│   │   │   ├── AgentRuntime.swift      # Agent loop + ChatMessage
+│   │   │   ├── SystemPrompt.swift      # Persona + memory + context builder
+│   │   │   ├── SessionManager.swift    # Session persistence + multi-session
+│   │   │   ├── MemoryStore.swift       # Observations CRUD + extraction
+│   │   │   ├── BackgroundAI.swift      # Fast-model calls (title, extraction)
+│   │   │   ├── AITracer.swift          # API call tracing (SQLite)
+│   │   │   └── Tools/
+│   │   │       ├── AITool.swift        # Protocol + ToolRegistry
+│   │   │       ├── GetUserStatsTool.swift
+│   │   │       ├── GetWordHistoryTool.swift
+│   │   │       ├── GetWeakWordsTool.swift
+│   │   │       ├── GetCurrentSessionTool.swift
+│   │   │       ├── RecallObservationsTool.swift
+│   │   │       ├── SearchConversationsTool.swift
+│   │   │       └── DatabaseService+AI.swift
+│   │   ├── AIService.swift             # Legacy (to be removed)
 │   │   ├── AIProviders/
-│   │   │   ├── AIProvider.swift        # Protocol
+│   │   │   ├── AIProvider.swift        # Legacy protocol
 │   │   │   ├── ClaudeProvider.swift    # Anthropic API
 │   │   │   └── OpenAIProvider.swift    # Fallback
 │   │   ├── ImportService.swift         # Anki/CSV/text import
@@ -75,9 +96,15 @@ Erudite/
 │   │   │   ├── RetentionChart.swift    # Retention curve
 │   │   │   ├── HeatmapView.swift       # Streak heatmap
 │   │   │   └── WeaknessView.swift      # Weak areas analysis
-│   │   └── AI/
-│   │       ├── AITeacherBar.swift      # Persistent AI bar (global)
-│   │       └── AIConversationView.swift # Expanded AI interaction
+│   │   ├── AI/
+│   │   │   ├── AIChatPanel.swift       # Right-side panel (session header + chat)
+│   │   │   ├── ChatMessageView.swift   # Message bubble + markdown
+│   │   │   ├── ChatInputView.swift     # Input + send/cancel
+│   │   │   ├── StreamingTextView.swift  # Live streaming text
+│   │   │   ├── ThinkingIndicator.swift  # Tool execution animation
+│   │   │   └── SessionListView.swift   # Session list popover
+│   │   └── Debug/
+│   │       └── DebugPanelView.swift    # ⌘⇧D debug window (logs + traces + stats)
 │   └── Resources/
 │       ├── Data/
 │       │   ├── words.json              # Prebuilt word database
@@ -179,38 +206,42 @@ Difficulty update:
 
 ---
 
-## AI Service Architecture
+## AI Service Architecture (Implemented)
 
-```swift
-// Provider abstraction
-protocol AIProvider {
-    func generate(prompt: String, system: String?) async throws -> String
-    func generateStream(prompt: String, system: String?) -> AsyncThrowingStream<String, Error>
-}
+```
+┌─────────────────────────────────────────────────────────────┐
+│ AgentRuntime (@Observable)                                    │
+│   - Agent loop: messages → LLM → tool_use → execute → loop  │
+│   - Streaming text → SwiftUI (50ms throttle)                 │
+│   - onTurnComplete callback for persistence                  │
+├─────────────────────────────────────────────────────────────┤
+│ AnthropicClient                                              │
+│   - Self-implemented (no SDK dependency)                     │
+│   - SSE streaming via URLSession.bytes + SSEParser           │
+│   - Dual auth: x-api-key (official) / Bearer (proxies)      │
+│   - Prompt caching support                                   │
+├─────────────────────────────────────────────────────────────┤
+│ Tool System                                                  │
+│   - AITool protocol + ToolRegistry (singleton)               │
+│   - 6 tools: user_stats, word_history, weak_words,          │
+│     current_session, recall_observations, search_conversations│
+├─────────────────────────────────────────────────────────────┤
+│ Memory System                                                │
+│   - SessionManager: multi-session, persistence, restore      │
+│   - MemoryStore: observations, extraction, prompt injection  │
+│   - BackgroundAI: fast-model tasks (title, extraction)       │
+├─────────────────────────────────────────────────────────────┤
+│ Logging & Tracing                                            │
+│   - Log.ai/memory/db/app (os.Logger + file + ring buffer)   │
+│   - AITracer: per-call SQLite recording                      │
+│   - DebugPanelView (⌘⇧D)                                   │
+└─────────────────────────────────────────────────────────────┘
 
-// High-level AI capabilities
-class AIService {
-    private let provider: AIProvider
-    private let cache: AICacheRepository
-
-    // Per-word
-    func generateMnemonic(word: Word) async throws -> String
-    func generateExample(word: Word) async throws -> String
-    func compareWords(_ a: Word, _ b: Word) async throws -> String
-    func explainWord(word: Word, question: String) async throws -> String
-
-    // Per-session
-    func generateDailyBriefing(context: LearningContext) async throws -> String
-    func generateSessionSummary(session: StudySession, context: LearningContext) async throws -> String
-
-    // Per-plan
-    func generateWeeklyPlan(context: LearningContext) async throws -> StudyPlan
-    func generateWeeklyReport(stats: WeeklyStats) async throws -> String
-
-    // Quiz generation
-    func generateDistractors(word: Word, count: Int) async throws -> [String]
-    func explainQuizAnswer(question: QuizQuestion, userAnswer: String) async throws -> String
-}
+Config (Config.json):
+  aiApiKey      — API key (Anthropic or proxy)
+  aiBaseURL     — Custom endpoint (empty = api.anthropic.com)
+  aiModel       — Main model for chat (empty = claude-sonnet-4)
+  aiFastModel   — Background tasks (empty = falls back to aiModel)
 ```
 
 ### Cost Control Strategy
@@ -232,14 +263,32 @@ Estimated daily API cost: minimal (mostly cached pre-generated content).
 
 ```
 ~/Library/Application Support/Erudite/
-├── erudite.db                  # SQLite database (GRDB)
-├── ai_cache/                   # Overflow AI content if needed
+├── erudite.db                  # SQLite database (GRDB, 11 tables)
+├── Logs/                       # Daily log files (7-day rotation)
+│   └── erudite-2026-05-28.log
 └── exports/                    # User export temp files
 
 App Bundle:
 ├── Resources/Data/words.json   # Prebuilt word database
 └── Resources/Data/roots.json   # Root reference data
 ```
+
+### SQLite Tables (11)
+
+| Table | Purpose |
+|-------|---------|
+| word | 13K words with full JSON blob |
+| reviewCard | FSRS state (stability, difficulty, due date) |
+| reviewLog | Every rating event |
+| studySession | Session metadata |
+| wordList | Word book definitions |
+| wordListEntry | Many-to-many word↔book |
+| aiCache | Legacy AI content cache |
+| typingLog | Typing practice results |
+| ai_sessions | Chat conversation sessions |
+| ai_messages | Chat messages (full ContentBlock JSON) |
+| ai_observations | Long-term learner observations |
+| ai_traces | API call tracing (tokens, latency, errors) |
 
 ### Data Flow
 

@@ -129,6 +129,60 @@ nonisolated(unsafe) final class DatabaseService: Sendable {
             }
             try db.create(index: "idx_typing_word", on: "typingLog", columns: ["wordId"], ifNotExists: true)
             try db.create(index: "idx_typing_time", on: "typingLog", columns: ["timestamp"], ifNotExists: true)
+
+            // AI Chat Sessions
+            try db.create(table: "ai_sessions", ifNotExists: true) { t in
+                t.primaryKey("id", .text)
+                t.column("title", .text).notNull().defaults(to: "New Conversation")
+                t.column("summary", .text)
+                t.column("createdAt", .datetime).notNull()
+                t.column("lastMessageAt", .datetime).notNull()
+                t.column("messageCount", .integer).notNull().defaults(to: 0)
+                t.column("isArchived", .boolean).notNull().defaults(to: false)
+            }
+
+            // AI Chat Messages
+            try db.create(table: "ai_messages", ifNotExists: true) { t in
+                t.primaryKey("id", .text)
+                t.column("sessionId", .text).notNull()
+                    .references("ai_sessions", onDelete: .cascade)
+                t.column("role", .text).notNull()
+                t.column("content", .text).notNull()
+                t.column("blocksJson", .text)
+                t.column("isToolResult", .boolean).notNull().defaults(to: false)
+                t.column("createdAt", .datetime).notNull()
+            }
+            try db.create(index: "idx_ai_msg_session", on: "ai_messages", columns: ["sessionId", "createdAt"], ifNotExists: true)
+
+            // AI Observations (long-term memory)
+            try db.create(table: "ai_observations", ifNotExists: true) { t in
+                t.primaryKey("id", .text)
+                t.column("type", .text).notNull()
+                t.column("content", .text).notNull()
+                t.column("relatedWords", .text)
+                t.column("confidence", .double).notNull().defaults(to: 1.0)
+                t.column("sourceSessionId", .text)
+                t.column("createdAt", .datetime).notNull()
+                t.column("lastConfirmedAt", .datetime).notNull()
+            }
+            try db.create(index: "idx_ai_obs_type", on: "ai_observations", columns: ["type"], ifNotExists: true)
+            try db.create(index: "idx_ai_obs_confidence", on: "ai_observations", columns: ["confidence"], ifNotExists: true)
+
+            // AI API call traces (for debugging and cost analysis)
+            try db.create(table: "ai_traces", ifNotExists: true) { t in
+                t.primaryKey("id", .text)
+                t.column("timestamp", .datetime).notNull()
+                t.column("model", .text).notNull()
+                t.column("purpose", .text).notNull()
+                t.column("inputTokens", .integer).notNull().defaults(to: 0)
+                t.column("outputTokens", .integer).notNull().defaults(to: 0)
+                t.column("cacheHit", .boolean).notNull().defaults(to: false)
+                t.column("latencyMs", .integer).notNull().defaults(to: 0)
+                t.column("toolCalls", .text)
+                t.column("error", .text)
+                t.column("sessionId", .text)
+            }
+            try db.create(index: "idx_ai_traces_time", on: "ai_traces", columns: ["timestamp"], ifNotExists: true)
         }
     }
 
