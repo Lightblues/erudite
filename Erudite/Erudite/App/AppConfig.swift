@@ -8,6 +8,8 @@ struct AppConfig: Codable {
     let mwDictionaryKey: String
     let mwThesaurusKey: String
     let aiApiKey: String
+    let aiBaseURL: String?
+    let aiModel: String?
 
     /// Whether Merriam-Webster API is configured (non-empty key)
     var hasMWKeys: Bool {
@@ -20,18 +22,35 @@ struct AppConfig: Codable {
         !aiApiKey.isEmpty && aiApiKey != "YOUR_AI_API_KEY_HERE"
     }
 
+    /// Resolved base URL (defaults to Anthropic official endpoint)
+    var resolvedAIBaseURL: String {
+        if let url = aiBaseURL, !url.isEmpty, url != "https://api.anthropic.com/v1/messages" {
+            // Strip trailing slash for consistency
+            return url.hasSuffix("/") ? String(url.dropLast()) : url
+        }
+        return "https://api.anthropic.com/v1/messages"
+    }
+
+    /// Resolved model name (defaults to Sonnet)
+    var resolvedAIModel: String {
+        if let model = aiModel, !model.isEmpty {
+            return model
+        }
+        return AnthropicModel.sonnet
+    }
+
     /// Shared singleton loaded from bundle
     static let shared: AppConfig = {
         guard let url = Bundle.main.url(forResource: "Config", withExtension: "json") else {
             print("[AppConfig] Config.json not found in bundle. Copy Config.example.json → Config.json and add your keys.")
-            return AppConfig(mwDictionaryKey: "", mwThesaurusKey: "", aiApiKey: "")
+            return AppConfig(mwDictionaryKey: "", mwThesaurusKey: "", aiApiKey: "", aiBaseURL: nil, aiModel: nil)
         }
         do {
             let data = try Data(contentsOf: url)
             return try JSONDecoder().decode(AppConfig.self, from: data)
         } catch {
             print("[AppConfig] Failed to parse Config.json: \(error)")
-            return AppConfig(mwDictionaryKey: "", mwThesaurusKey: "", aiApiKey: "")
+            return AppConfig(mwDictionaryKey: "", mwThesaurusKey: "", aiApiKey: "", aiBaseURL: nil, aiModel: nil)
         }
     }()
 }

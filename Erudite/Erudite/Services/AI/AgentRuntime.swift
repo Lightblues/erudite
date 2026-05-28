@@ -44,7 +44,6 @@ final class AgentRuntime {
     private var currentTask: Task<Void, Never>?
 
     // Configuration
-    private let model = AnthropicModel.sonnet
     private let maxToolRounds = 5
     private let maxTokens = 2048
 
@@ -119,7 +118,7 @@ final class AgentRuntime {
                 let stream = try await client.stream(
                     request: request,
                     apiKey: apiKey,
-                    baseURL: AppConfig.shared.aiBaseURL
+                    baseURL: AppConfig.shared.resolvedAIBaseURL
                 )
 
                 var accumulatedText = ""
@@ -252,7 +251,7 @@ final class AgentRuntime {
         let apiMessages = messages.map { $0.toAPIMessage() }
 
         return AnthropicRequest(
-            model: model,
+            model: AppConfig.shared.resolvedAIModel,
             max_tokens: maxTokens,
             system: [
                 AnthropicRequest.SystemBlock(text: systemPrompt, cacheControl: true)
@@ -326,16 +325,5 @@ struct ChatMessage: Identifiable {
             if case .toolUse(_, let name, _) = block { return name }
             return nil
         }
-    }
-}
-
-// MARK: - AppConfig Extension
-
-extension AppConfig {
-    /// Optional custom base URL for the AI API (e.g., OpenRouter)
-    var aiBaseURL: String? {
-        // For now, always use default Anthropic endpoint
-        // Future: add aiBaseURL field to Config.json
-        nil
     }
 }

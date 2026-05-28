@@ -18,20 +18,33 @@ final class AnthropicClient {
 
     /// Send a streaming request to the Messages API.
     /// Returns an AsyncThrowingStream that yields parsed StreamEvents.
+    /// Supports both official Anthropic API (x-api-key) and compatible proxies (Bearer token).
     func stream(
         request: AnthropicRequest,
         apiKey: String,
         baseURL: String? = nil
     ) async throws -> AsyncThrowingStream<StreamEvent, Error> {
-        let url = URL(string: baseURL ?? "https://api.anthropic.com/v1/messages")!
+        let urlString = baseURL ?? "https://api.anthropic.com/v1/messages"
+        guard let url = URL(string: urlString) else {
+            throw AIClientError.httpError(status: 0, message: "Invalid URL: \(urlString)")
+        }
+
+        let isOfficialAPI = urlString.contains("anthropic.com")
 
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         urlRequest.setValue(apiVersion, forHTTPHeaderField: "anthropic-version")
-        // Enable prompt caching
-        urlRequest.setValue("prompt-caching-2024-07-31", forHTTPHeaderField: "anthropic-beta")
+
+        // Auth: official API uses x-api-key, proxies typically use Bearer token
+        if isOfficialAPI {
+            urlRequest.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+            // Enable prompt caching (official API only)
+            urlRequest.setValue("prompt-caching-2024-07-31", forHTTPHeaderField: "anthropic-beta")
+        } else {
+            urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
+
         urlRequest.timeoutInterval = 120
 
         let encoder = JSONEncoder()
