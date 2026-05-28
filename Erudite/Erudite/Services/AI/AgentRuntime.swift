@@ -44,7 +44,7 @@ final class AgentRuntime {
     private var currentTask: Task<Void, Never>?
 
     // Configuration
-    private let maxToolRounds = 5
+    private let maxToolRounds = 10
     private let maxTokens = 2048
 
     // MARK: - Init
@@ -265,6 +265,13 @@ final class AgentRuntime {
                     // Append tool results as user message (per Anthropic API spec)
                     messages.append(ChatMessage(role: .user, text: "", blocks: resultBlocks, isToolResult: true))
                     toolRounds += 1
+
+                    // Inject "stop looping" hint when approaching limit
+                    if toolRounds >= maxToolRounds - 2 {
+                        let hintBlock: [ContentBlock] = [.text("[System: You have used many tool calls. Please respond directly to the user now without calling more tools.]")]
+                        messages.append(ChatMessage(role: .user, text: "", blocks: hintBlock, isToolResult: true))
+                    }
+
                     // Loop continues — sends updated messages back to LLM
                 }
 

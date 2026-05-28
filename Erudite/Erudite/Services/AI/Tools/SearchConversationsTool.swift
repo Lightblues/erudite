@@ -5,36 +5,49 @@ import GRDB
 
 struct SearchConversationsTool: AITool {
     static let name = "search_past_conversations"
-    static let description = "Search past conversation sessions by topic. Returns session titles, dates, and message counts. Use this when the user asks if you've discussed something before or wants to find a past conversation."
+    static let description = "List or search past conversation sessions. When called without a query, returns all recent sessions. When called with a query, searches session titles and summaries. Use this when the user asks about past conversations or what you've discussed before."
     static let inputSchema = ToolInputSchema(
         properties: [
-            "query": ToolProperty(type: "string", description: "Search keyword to match against session titles and summaries"),
-            "limit": ToolProperty(type: "integer", description: "Max results to return (default 5)")
+            "query": ToolProperty(type: "string", description: "Optional search keyword. Leave empty or omit to list all recent sessions."),
+            "limit": ToolProperty(type: "integer", description: "Max results to return (default 10)")
         ],
-        required: ["query"]
+        required: nil  // query is now optional
     )
 
     func execute(input: [String: JSONValue], db: DatabaseService) throws -> String {
-        guard let query = input["query"]?.stringValue, !query.isEmpty else {
-            throw ToolError.invalidInput("'query' parameter is required")
-        }
-        let limit = input["limit"]?.intValue ?? 5
+        let query = input["query"]?.stringValue
+        let limit = input["limit"]?.intValue ?? 10
 
-        // Search sessions by title and summary
-        let sessions = try db.dbQueue.read { db in
-            try Row.fetchAll(db, sql: """
-                SELECT id, title, summary, createdAt, lastMessageAt, messageCount
-                FROM ai_sessions
-                WHERE isArchived = 0 AND (title LIKE ? OR summary LIKE ?)
-                ORDER BY lastMessageAt DESC
-                LIMIT ?
-                """, arguments: ["%\(query)%", "%\(query)%", limit])
+        // Search or list sessions
+        let sessions: [Row]
+        if let query, !query.isEmpty {
+            sessions = try db.dbQueue.read { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT id, title, summary, createdAt, lastMessageAt, messageCount
+                    FROM ai_sessions
+                    WHERE isArchived = 0 AND (title LIKE ? OR summary LIKE ?)
+                    ORDER BY lastMessageAt DESC
+                    LIMIT ?
+                    """, arguments: ["%\(query)%", "%\(query)%", limit])
+            }
+        } else {
+            // No query — list all recent sessions
+            sessions = try db.dbQueue.read { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT id, title, summary, createdAt, lastMessageAt, messageCount
+                    FROM ai_sessions
+                    WHERE isArchived = 0
+                    ORDER BY lastMessageAt DESC
+                    LIMIT ?
+                    """, arguments: [limit])
+            }
         }
 
         if sessions.isEmpty {
+            let msg = query.map { "No past conversations found matching '\($0)'" } ?? "No past conversations yet"
             return try encodeToolResult([
                 "sessions": .array([]),
-                "message": .string("No past conversations found matching '\(query)'")
+                "message": .string(msg)
             ])
         }
 
@@ -47,7 +60,7 @@ struct SearchConversationsTool: AITool {
             let lastMessageAt: Date = row["lastMessageAt"]
             let relativeDate = formatter.localizedString(for: lastMessageAt, relativeTo: Date())
 
-            return .object([
+            return JSONValue.object([
                 "title": .string(title),
                 "message_count": .int(messageCount),
                 "last_active": .string(relativeDate),
