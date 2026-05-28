@@ -182,8 +182,13 @@ final class FileLogger: @unchecked Sendable {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         logDirectory = appSupport.appendingPathComponent("Erudite/Logs", isDirectory: true)
 
-        try? FileManager.default.createDirectory(at: logDirectory, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.createDirectory(at: logDirectory, withIntermediateDirectories: true)
+        } catch {
+            print("[FileLogger] Failed to create log directory: \(logDirectory.path) — \(error)")
+        }
         rotateIfNeeded()
+        print("[FileLogger] Initialized at: \(logDirectory.path)")
     }
 
     func write(_ entry: LogEntry) {
@@ -220,11 +225,19 @@ final class FileLogger: @unchecked Sendable {
         let filePath = logDirectory.appendingPathComponent("erudite-\(today).log")
 
         if !FileManager.default.fileExists(atPath: filePath.path) {
-            FileManager.default.createFile(atPath: filePath.path, contents: nil)
+            let created = FileManager.default.createFile(atPath: filePath.path, contents: nil)
+            if !created {
+                print("[FileLogger] Failed to create log file at: \(filePath.path)")
+            }
         }
 
-        fileHandle = try? FileHandle(forWritingTo: filePath)
-        fileHandle?.seekToEndOfFile()
+        do {
+            fileHandle = try FileHandle(forWritingTo: filePath)
+            fileHandle?.seekToEndOfFile()
+        } catch {
+            print("[FileLogger] Failed to open log file: \(error)")
+            fileHandle = nil
+        }
 
         // Clean up old logs (keep 7 days)
         cleanOldLogs()

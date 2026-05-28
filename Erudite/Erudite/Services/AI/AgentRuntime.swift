@@ -57,9 +57,9 @@ final class AgentRuntime {
 
     // MARK: - Public API
 
-    /// Callback after each complete turn (user msg + assistant response).
-    /// Used by SessionManager for persistence and MemoryStore for extraction.
-    var onTurnComplete: ((_ userMessage: ChatMessage, _ assistantMessage: ChatMessage) -> Void)?
+    /// Callback after each complete turn (all new messages since last save).
+    /// Called with the full messages array — persistence layer saves any unsaved ones.
+    var onTurnComplete: ((_ allMessages: [ChatMessage]) -> Void)?
 
     /// Load pre-existing messages (from session restore).
     func loadMessages(_ restoredMessages: [ChatMessage]) {
@@ -225,9 +225,7 @@ final class AgentRuntime {
                     phase = .idle
 
                     // Notify for persistence + memory extraction
-                    if let lastUserMsg = messages.last(where: { $0.role == .user && !$0.isToolResult }) {
-                        onTurnComplete?(lastUserMsg, assistantMsg)
-                    }
+                    onTurnComplete?(messages)
                     return
 
                 } else {

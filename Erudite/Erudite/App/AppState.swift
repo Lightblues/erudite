@@ -61,20 +61,21 @@ final class AppState {
             }
             sessions.refreshSessionList()
 
-            // Wire turn completion: persist messages + trigger extraction
-            runtime.onTurnComplete = { [weak sessions, weak memory, weak bgAI] userMsg, assistantMsg in
+            // Wire turn completion: persist ALL messages + trigger extraction
+            runtime.onTurnComplete = { [weak sessions, weak memory, weak bgAI] allMessages in
                 guard let sessions, let memory else { return }
-                // Persist messages
-                try? sessions.saveMessage(userMsg)
-                try? sessions.saveMessage(assistantMsg)
+                // Persist all messages (saveMessage uses INSERT OR REPLACE, so re-saving is safe)
+                for msg in allMessages {
+                    try? sessions.saveMessage(msg)
+                }
                 try? sessions.updateSessionMeta()
 
                 // Trigger extraction if enough turns
-                let messageCount = runtime.messages.count
+                let messageCount = allMessages.count
                 if memory.shouldExtract(messageCount: messageCount) {
                     Task {
                         try? await memory.extractAndSave(
-                            from: runtime.messages,
+                            from: allMessages,
                             sessionId: sessions.currentSession?.id
                         )
                     }
@@ -84,7 +85,7 @@ final class AppState {
                 if sessions.currentSession?.title == "New Conversation" && messageCount >= 2 {
                     Task {
                         guard let bgAI else { return }
-                        if let title = try? await bgAI.generateTitle(from: runtime.messages) {
+                        if let title = try? await bgAI.generateTitle(from: allMessages) {
                             sessions.updateTitle(title)
                         }
                     }
