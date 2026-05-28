@@ -22,11 +22,13 @@ erudite/
 └── Erudite/                        ← Xcode project
     ├── Erudite.xcodeproj
     └── Erudite/                    ← Source (auto-synced by Xcode)
-        ├── App/                    ← @main entry, AppState
+        ├── App/                    ← @main entry, AppState, AppConfig, Log
         ├── Models/                 ← Word, ReviewCard, StudySession, WordList
         ├── Engine/FSRS/            ← Scheduling algorithm (stub, to be implemented)
-        ├── Services/               ← DatabaseService (GRDB), AIService, WordLoader
-        ├── Views/                  ← SwiftUI views (Main, Study, Review, Library, Dashboard, AI)
+        ├── Services/               ← DatabaseService (GRDB), WordLoader, Pronunciation
+        ├── Services/AI/            ← AI Companion (AgentRuntime, SSE, tools, memory, tracing)
+        ├── ViewModels/             ← ChatViewModel
+        ├── Views/                  ← SwiftUI views (Main, Study, Library, Dashboard, AI, Debug)
         └── Resources/Data/         ← Bundled word database (words.json)
 ```
 
@@ -35,6 +37,7 @@ erudite/
 - [.ea/spec/product.md](.ea/spec/product.md) — Product vision, GRE context, roadmap phases
 - [.ea/spec/features.md](.ea/spec/features.md) — Detailed feature design & interaction modes
 - [.ea/spec/ai-system.md](.ea/spec/ai-system.md) — AI Teacher 3-layer architecture
+- [.ea/spec/ai-companion.md](.ea/spec/ai-companion.md) — AI Companion: agent, memory, tools, proactive
 - [.ea/spec/data.md](.ea/spec/data.md) — Data models, SQLite schema, word database pipeline
 - [.ea/spec/architecture.md](.ea/spec/architecture.md) — Tech stack, FSRS algorithm, dependencies
 - [.ea/spec/development.md](.ea/spec/development.md) — Dev workflow, build commands, coding conventions
