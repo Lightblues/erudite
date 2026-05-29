@@ -6,6 +6,7 @@ struct ContentView: View {
     @Environment(AppState.self) private var appState
     @State private var showAIPanel: Bool = UserDefaults.standard.bool(forKey: "showAIPanel")
     @State private var aiPanelWidth: CGFloat = CGFloat(UserDefaults.standard.double(forKey: "aiPanelWidth").clamped(to: 240...500, default: 300))
+    @State private var chatFocusTrigger: Bool = false  // Toggled to force-focus chat input
 
     var body: some View {
         @Bindable var state = appState
@@ -46,12 +47,25 @@ struct ContentView: View {
                             )
                     }
 
-                AIChatPanel(runtime: runtime)
+                AIChatPanel(runtime: runtime, focusTrigger: $chatFocusTrigger)
                     .frame(width: aiPanelWidth)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
         .animation(.easeInOut(duration: 0.2), value: showAIPanel)
+        .onKeyPress("/") {
+            // Global "/" shortcut: show AI panel + focus input
+            // Only active when NOT in keyboard-intensive modes (flashcard/typing)
+            guard appState.selectedTab != .flashcard && appState.selectedTab != .typing else {
+                return .ignored
+            }
+            if !showAIPanel {
+                showAIPanel = true
+                UserDefaults.standard.set(true, forKey: "showAIPanel")
+            }
+            chatFocusTrigger.toggle()
+            return .handled
+        }
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Button {

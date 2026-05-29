@@ -7,9 +7,11 @@ struct AIChatPanel: View {
     @Environment(AppState.self) private var appState
     @State private var viewModel: ChatViewModel
     @State private var showSessionList = false
+    @Binding var focusTrigger: Bool
 
-    init(runtime: AgentRuntime) {
+    init(runtime: AgentRuntime, focusTrigger: Binding<Bool>) {
         self._viewModel = State(initialValue: ChatViewModel(runtime: runtime))
+        self._focusTrigger = focusTrigger
     }
 
     var body: some View {
@@ -37,6 +39,7 @@ struct AIChatPanel: View {
             ChatInputView(
                 text: $viewModel.inputText,
                 isProcessing: viewModel.isProcessing,
+                focusTrigger: $focusTrigger,
                 onSend: viewModel.send,
                 onCancel: viewModel.cancel
             )
@@ -89,6 +92,12 @@ struct AIChatPanel: View {
                     onDelete: { deleteSession($0) },
                     onNewSession: { createNewSession() }
                 )
+            }
+            .onChange(of: showSessionList) { _, isShowing in
+                // Re-focus chat input when popover dismisses
+                if !isShowing {
+                    focusTrigger.toggle()
+                }
             }
         }
         .padding(.horizontal, 12)

@@ -3,11 +3,13 @@ import SwiftUI
 // MARK: - Chat Input View
 
 /// Text input field with send/cancel button.
-/// Always captures keyboard input (like Claude.app) — even while scrolling or selecting text.
+/// Receives focus via `focusTrigger` (toggled externally, e.g. by "/" shortcut).
 /// Shift+Enter for newline, Enter to send.
+/// Always editable — even during streaming (user can prepare next message).
 struct ChatInputView: View {
     @Binding var text: String
     let isProcessing: Bool
+    @Binding var focusTrigger: Bool
     let onSend: () -> Void
     let onCancel: () -> Void
 
@@ -15,7 +17,6 @@ struct ChatInputView: View {
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            // Use a custom key-handling wrapper around TextField
             TextEditor(text: $text)
                 .font(.body)
                 .scrollContentBackground(.hidden)
@@ -24,10 +25,10 @@ struct ChatInputView: View {
                 .focused($isFocused)
                 .onKeyPress(.return, phases: .down) { keyPress in
                     if keyPress.modifiers.contains(.shift) {
-                        // Shift+Enter: insert newline (let default handling proceed)
+                        // Shift+Enter: insert newline
                         return .ignored
                     } else {
-                        // Enter: send message
+                        // Enter: send (only if not processing and has text)
                         if canSend && !isProcessing {
                             onSend()
                         }
@@ -57,6 +58,10 @@ struct ChatInputView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .onAppear {
+            isFocused = true
+        }
+        .onChange(of: focusTrigger) { _, _ in
+            // External focus request (e.g. "/" shortcut, session switch)
             isFocused = true
         }
         .onChange(of: isProcessing) { _, newValue in
