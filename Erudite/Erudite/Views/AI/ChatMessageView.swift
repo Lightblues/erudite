@@ -27,6 +27,11 @@ struct ChatMessageView: View {
                 if !message.text.isEmpty {
                     markdownText(message.text)
                 }
+
+                // Turn metadata (tokens, latency, request ID)
+                if let meta = message.turnMeta {
+                    turnMetaView(meta)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -113,18 +118,24 @@ struct ChatMessageView: View {
                 .foregroundStyle(.orange)
 
             if !detail.input.isEmpty && detail.input != "{}" {
-                Text("  input: \(detail.input)")
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
+                ScrollView(.vertical) {
+                    Text("  input: \(detail.input)")
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                .frame(maxHeight: 60)
             }
 
             // Result (if available)
             if let result = detail.result {
-                Text("  → \(result.prefix(200))")
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(.green.opacity(0.8))
-                    .lineLimit(4)
+                ScrollView(.vertical) {
+                    Text("  → \(result)")
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.green.opacity(0.8))
+                        .textSelection(.enabled)
+                }
+                .frame(maxHeight: 100)
             }
         }
     }
@@ -169,6 +180,30 @@ struct ChatMessageView: View {
         case .array(let arr): return "[\(arr.map { formatJSONValue($0) }.joined(separator: ", "))]"
         case .object(let dict): return formatJSON(.object(dict))
         }
+    }
+
+    // MARK: - Turn Metadata
+
+    private func turnMetaView(_ meta: TurnMeta) -> some View {
+        HStack(spacing: 8) {
+            // Tokens
+            Text("\(meta.inputTokens)→\(meta.outputTokens) tok")
+            // Latency
+            Text("\(meta.latencyMs)ms")
+            // Cache
+            if meta.cacheHit {
+                Text("cache✓")
+                    .foregroundStyle(.green)
+            }
+            // Request ID (truncated)
+            if let rid = meta.requestId {
+                Text(String(rid.prefix(8)))
+                    .help("Request ID: \(rid)")
+            }
+        }
+        .font(.system(.caption2, design: .monospaced))
+        .foregroundStyle(.secondary.opacity(0.7))
+        .padding(.top, 2)
     }
 
     // MARK: - Markdown

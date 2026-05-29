@@ -26,7 +26,7 @@ final class BackgroundAI {
             stream: true  // Use streaming (some proxies only support it)
         )
 
-        let stream = try await client.stream(
+        let (stream, _) = try await client.stream(
             request: request,
             apiKey: AppConfig.shared.aiApiKey,
             baseURL: AppConfig.shared.resolvedAIBaseURL
