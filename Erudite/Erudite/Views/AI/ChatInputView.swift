@@ -5,11 +5,12 @@ import SwiftUI
 /// Text input field with send/cancel button.
 /// Shift+Enter for newline, Enter to send.
 /// Always editable — even during streaming (user can prepare next message).
-/// Focus managed via `focusTrigger` (toggled by ⌘. or session switch).
+/// Focus managed via `focusTrigger` (toggled by ⌘.) and `resignTrigger` (toggled by Esc).
 struct ChatInputView: View {
     @Binding var text: String
     let isProcessing: Bool
     @Binding var focusTrigger: Bool
+    @Binding var resignTrigger: Bool
     let onSend: () -> Void
     let onCancel: () -> Void
 
@@ -34,6 +35,11 @@ struct ChatInputView: View {
                         return .handled  // Enter: send (or no-op if empty/processing)
                     }
                 }
+                .onKeyPress(.escape, phases: .down) { _ in
+                    // Esc: resign focus, return to main content
+                    isFocused = false
+                    return .handled
+                }
 
             if isProcessing {
                 Button(action: onCancel) {
@@ -56,12 +62,13 @@ struct ChatInputView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .onAppear {
+        .onChange(of: focusTrigger) { _, _ in
+            // Focus requested externally (⌘., session switch)
             isFocused = true
         }
-        .onChange(of: focusTrigger) { _, _ in
-            // Focus requested externally (⌘., session switch, popover dismiss)
-            isFocused = true
+        .onChange(of: resignTrigger) { _, _ in
+            // Resign requested externally
+            isFocused = false
         }
         .onChange(of: isFocused) { _, focused in
             // Report focus state so KeyCaptureView knows to yield

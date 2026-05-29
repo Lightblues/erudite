@@ -8,10 +8,12 @@ struct AIChatPanel: View {
     @State private var viewModel: ChatViewModel
     @State private var showSessionList = false
     @Binding var focusTrigger: Bool
+    @Binding var resignTrigger: Bool
 
-    init(runtime: AgentRuntime, focusTrigger: Binding<Bool>) {
+    init(runtime: AgentRuntime, focusTrigger: Binding<Bool>, resignTrigger: Binding<Bool>) {
         self._viewModel = State(initialValue: ChatViewModel(runtime: runtime))
         self._focusTrigger = focusTrigger
+        self._resignTrigger = resignTrigger
     }
 
     var body: some View {
@@ -40,6 +42,7 @@ struct AIChatPanel: View {
                 text: $viewModel.inputText,
                 isProcessing: viewModel.isProcessing,
                 focusTrigger: $focusTrigger,
+                resignTrigger: $resignTrigger,
                 onSend: viewModel.send,
                 onCancel: viewModel.cancel
             )

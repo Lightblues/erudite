@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var showAIPanel: Bool = UserDefaults.standard.bool(forKey: "showAIPanel")
     @State private var aiPanelWidth: CGFloat = CGFloat(UserDefaults.standard.double(forKey: "aiPanelWidth").clamped(to: 240...500, default: 300))
     @State private var chatFocusTrigger: Bool = false
+    @State private var chatResignTrigger: Bool = false
 
     var body: some View {
         @Bindable var state = appState
@@ -47,7 +48,7 @@ struct ContentView: View {
                             )
                     }
 
-                AIChatPanel(runtime: runtime, focusTrigger: $chatFocusTrigger)
+                AIChatPanel(runtime: runtime, focusTrigger: $chatFocusTrigger, resignTrigger: $chatResignTrigger)
                     .frame(width: aiPanelWidth)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
@@ -56,9 +57,20 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Button {
-                    showAIPanel.toggle()
-                    UserDefaults.standard.set(showAIPanel, forKey: "showAIPanel")
-                    if showAIPanel {
+                    // ⌘. three-state toggle:
+                    // 1. Panel closed → open + focus input
+                    // 2. Panel open, focus NOT in chat → focus input
+                    // 3. Panel open, focus IN chat → close panel
+                    if !showAIPanel {
+                        showAIPanel = true
+                        UserDefaults.standard.set(true, forKey: "showAIPanel")
+                        chatFocusTrigger.toggle()
+                    } else if appState.isChatInputActive {
+                        // Already focused in chat → close panel
+                        showAIPanel = false
+                        UserDefaults.standard.set(false, forKey: "showAIPanel")
+                    } else {
+                        // Panel open but focus elsewhere → focus chat
                         chatFocusTrigger.toggle()
                     }
                 } label: {
@@ -66,20 +78,6 @@ struct ContentView: View {
                 }
                 .help("Toggle AI Companion (⌘.)")
                 .keyboardShortcut(".", modifiers: .command)
-            }
-            ToolbarItem(placement: .automatic) {
-                Button {
-                    // ⌘L: Focus chat input (show panel if needed)
-                    if !showAIPanel {
-                        showAIPanel = true
-                        UserDefaults.standard.set(true, forKey: "showAIPanel")
-                    }
-                    chatFocusTrigger.toggle()
-                } label: {
-                    // Invisible button — just for the keyboard shortcut
-                    EmptyView()
-                }
-                .keyboardShortcut("l", modifiers: .command)
             }
         }
         .task {
