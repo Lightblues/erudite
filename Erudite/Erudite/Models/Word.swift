@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Word (Core Entity)
 
-struct Word: Identifiable, Codable, Hashable {
+nonisolated struct Word: Identifiable, Codable, Hashable {
     let id: String
     let spelling: String
     let phonetic: String?
@@ -47,7 +47,7 @@ struct Word: Identifiable, Codable, Hashable {
 
 // MARK: - Definition
 
-struct Definition: Codable, Hashable {
+nonisolated struct Definition: Codable, Hashable {
     let partOfSpeech: String
     let english: String
     let chinese: String
@@ -55,18 +55,18 @@ struct Definition: Codable, Hashable {
 
 // MARK: - Morpheme / Word Root
 
-struct MorphemeBreakdown: Codable, Hashable {
+nonisolated struct MorphemeBreakdown: Codable, Hashable {
     let segments: [Morpheme]
     let logic: String
 }
 
-struct Morpheme: Codable, Hashable {
+nonisolated struct Morpheme: Codable, Hashable {
     let text: String
     let type: MorphemeType
     let meaning: String
 }
 
-enum MorphemeType: String, Codable, Hashable {
+nonisolated enum MorphemeType: String, Codable, Hashable {
     case prefix
     case root
     case suffix
@@ -74,21 +74,21 @@ enum MorphemeType: String, Codable, Hashable {
 
 // MARK: - Example
 
-struct Example: Codable, Hashable {
+nonisolated struct Example: Codable, Hashable {
     let sentence: String
     let source: String
 }
 
 // MARK: - Enums
 
-enum Sentiment: String, Codable, Hashable {
+nonisolated enum Sentiment: String, Codable, Hashable {
     case positive
     case negative
     case neutral
     case ambivalent
 }
 
-enum FrequencyTier: Int, Codable, Hashable, Comparable {
+nonisolated enum FrequencyTier: Int, Codable, Hashable, Comparable {
     case core = 1
     case common = 2
     case advanced = 3

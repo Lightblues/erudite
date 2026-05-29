@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - ReviewCard (FSRS State)
 
-struct ReviewCard: Identifiable, Codable, Hashable {
+nonisolated struct ReviewCard: Identifiable, Codable, Hashable {
     let id: UUID
     let wordId: String
 
@@ -46,7 +46,7 @@ struct ReviewCard: Identifiable, Codable, Hashable {
 
 // MARK: - CardState
 
-enum CardState: Int, Codable, Hashable {
+nonisolated enum CardState: Int, Codable, Hashable {
     case new = 0
     case learning = 1
     case review = 2
@@ -64,7 +64,7 @@ enum CardState: Int, Codable, Hashable {
 
 // MARK: - Rating
 
-enum Rating: Int, Codable, Hashable, CaseIterable {
+nonisolated enum Rating: Int, Codable, Hashable, CaseIterable {
     case again = 1
     case hard = 2
     case good = 3
@@ -91,7 +91,7 @@ enum Rating: Int, Codable, Hashable, CaseIterable {
 
 // MARK: - ReviewLog
 
-struct ReviewLog: Codable, Hashable, Identifiable {
+nonisolated struct ReviewLog: Codable, Hashable, Identifiable {
     let id: Int?
     let cardId: UUID
     let rating: Rating

@@ -4,7 +4,7 @@ import Foundation
 // FSRS-5 has 19 trainable parameters. These are defaults from the reference implementation.
 // Future: allow per-user optimization based on review history.
 
-struct FSRSParameters {
+nonisolated struct FSRSParameters {
     // Initial stability for each rating when card is new
     let initialStability: [Rating: Double] = [
         .again: 0.4,

@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - WordBook
 
-struct WordBook: Identifiable, Codable, Hashable {
+nonisolated struct WordBook: Identifiable, Codable, Hashable {
     let id: String
     let name: String
     let exam: String?             // "GRE", "TOEFL", "SAT"
