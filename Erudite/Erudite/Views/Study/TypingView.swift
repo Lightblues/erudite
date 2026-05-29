@@ -33,7 +33,7 @@ struct TypingView: View {
             // Keyboard capture layer
             KeyCaptureView(
                 onKeyDown: { event in handleKeyEvent(event) },
-                isActive: appState.selectedTab == .typing && !showWordList && !appState.isChatInputActive
+                isActive: appState.selectedTab == .typing && !showWordList && appState.focusZone == .main
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }

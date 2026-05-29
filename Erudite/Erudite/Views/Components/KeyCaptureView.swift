@@ -26,8 +26,10 @@ struct KeyCaptureView: NSViewRepresentable {
         nsView.onKeyDown = onKeyDown
         nsView.isActiveCapture = isActive
         if isActive {
-            // Ensure we have focus when becoming active
+            // Ensure we have focus when becoming active. Guard at fire-time:
+            // the zone may have flipped to .chat before this runs.
             DispatchQueue.main.async {
+                guard nsView.isActiveCapture else { return }
                 nsView.window?.makeFirstResponder(nsView)
             }
         }
@@ -63,12 +65,33 @@ struct KeyEvent {
 
 final class KeyNSView: NSView {
     var onKeyDown: (KeyEvent) -> Bool = { _ in false }
-    var isActiveCapture: Bool = true
+    var isActiveCapture: Bool = true {
+        didSet { updateRegistration() }
+    }
 
     override var acceptsFirstResponder: Bool { true }
 
     // CRITICAL: Pass all mouse events through to SwiftUI views underneath
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    /// Forcibly take firstResponder (called by AppState.focusMain on main-area clicks).
+    func grabFocus() {
+        guard isActiveCapture, let window else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isActiveCapture else { return }
+            window.makeFirstResponder(self)
+        }
+    }
+
+    /// Register/unregister as the app's active key capture view so AppState can
+    /// restore focus to it directly when the user clicks back into the main area.
+    private func updateRegistration() {
+        if isActiveCapture, window != nil {
+            AppState.shared?.activeKeyCapture = self
+        } else if AppState.shared?.activeKeyCapture === self {
+            AppState.shared?.activeKeyCapture = nil
+        }
+    }
 
     override func keyDown(with event: NSEvent) {
         let keyEvent = KeyEvent(
@@ -84,6 +107,7 @@ final class KeyNSView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        updateRegistration()
         if isActiveCapture {
             window?.makeFirstResponder(self)
         }
@@ -98,6 +122,9 @@ final class KeyNSView: NSView {
 
     override func removeFromSuperview() {
         NotificationCenter.default.removeObserver(self)
+        if AppState.shared?.activeKeyCapture === self {
+            AppState.shared?.activeKeyCapture = nil
+        }
         super.removeFromSuperview()
     }
 

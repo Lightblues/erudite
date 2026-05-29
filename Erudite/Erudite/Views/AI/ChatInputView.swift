@@ -5,12 +5,10 @@ import SwiftUI
 /// Text input field with send/cancel button.
 /// Shift+Enter for newline, Enter to send.
 /// Always editable — even during streaming (user can prepare next message).
-/// Focus managed via `focusTrigger` (toggled by ⌘.) and `resignTrigger` (toggled by Esc).
+/// Focus is driven entirely by `appState.focusZone` / `appState.chatFocusNonce`.
 struct ChatInputView: View {
     @Binding var text: String
     let isProcessing: Bool
-    @Binding var focusTrigger: Bool
-    @Binding var resignTrigger: Bool
     let onSend: () -> Void
     let onCancel: () -> Void
 
@@ -36,8 +34,8 @@ struct ChatInputView: View {
                     }
                 }
                 .onKeyPress(.escape, phases: .down) { _ in
-                    // Esc: resign focus, return to main content
-                    isFocused = false
+                    // Esc: hand keyboard back to the main study area.
+                    appState.focusMain()
                     return .handled
                 }
 
@@ -63,20 +61,36 @@ struct ChatInputView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .onAppear {
-            // Auto-focus when panel first opens
-            isFocused = true
+            // Panel opened with chat focused → grab the input.
+            if appState.focusZone == .chat { focusInput() }
         }
-        .onChange(of: focusTrigger) { _, _ in
-            // Focus requested externally (⌘., session switch, tap on messages)
-            isFocused = true
+        .onChange(of: appState.chatFocusNonce) { _, _ in
+            // Explicit focus request (⌘., clicking anywhere in the chat region,
+            // session switch, popover dismiss). Force re-grab even if already focused.
+            focusInput()
         }
-        .onChange(of: resignTrigger) { _, _ in
-            // Resign requested externally
-            isFocused = false
+        .onChange(of: appState.focusZone) { _, zone in
+            if zone == .main {
+                isFocused = false
+            }
         }
         .onChange(of: isFocused) { _, focused in
-            // Report focus state so KeyCaptureView knows to yield
-            appState.isChatInputActive = focused
+            // If the input gains focus by any means, ensure the zone reflects it
+            // so KeyCaptureView yields.
+            if focused && appState.focusZone != .chat {
+                appState.focusZone = .chat
+            }
+        }
+    }
+
+    /// Robustly move firstResponder to the input. Toggling false→true forces
+    /// SwiftUI to re-assert focus even when `isFocused` is already true (e.g. focus
+    /// was visually stolen by a selectable message) and survives the panel's
+    /// entrance transition by retrying on the next runloop.
+    private func focusInput() {
+        isFocused = false
+        DispatchQueue.main.async {
+            isFocused = true
         }
     }
 

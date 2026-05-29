@@ -6,8 +6,7 @@ struct ContentView: View {
     @Environment(AppState.self) private var appState
     @State private var showAIPanel: Bool = UserDefaults.standard.bool(forKey: "showAIPanel")
     @State private var aiPanelWidth: CGFloat = CGFloat(UserDefaults.standard.double(forKey: "aiPanelWidth").clamped(to: 240...500, default: 300))
-    @State private var chatFocusTrigger: Bool = false
-    @State private var chatResignTrigger: Bool = false
+    @State private var mouseMonitor = MouseMonitorHolder()
 
     var body: some View {
         @Bindable var state = appState
@@ -48,34 +47,69 @@ struct ContentView: View {
                             )
                     }
 
-                AIChatPanel(runtime: runtime, focusTrigger: $chatFocusTrigger, resignTrigger: $chatResignTrigger)
+                AIChatPanel(runtime: runtime)
                     .frame(width: aiPanelWidth)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
+        .background(MainWindowAccessor())
         .animation(.easeInOut(duration: 0.2), value: showAIPanel)
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Button {
-                    // ⌘. simple toggle: open+focus / close
-                    showAIPanel.toggle()
-                    UserDefaults.standard.set(showAIPanel, forKey: "showAIPanel")
-                    if showAIPanel {
-                        // Pre-set so KeyCaptureView yields immediately
-                        appState.isChatInputActive = true
-                        chatFocusTrigger.toggle()
-                    } else {
-                        appState.isChatInputActive = false
-                    }
+                    toggleChat()
                 } label: {
                     Image(systemName: showAIPanel ? "sidebar.right" : "sparkles")
                 }
-                .help("Toggle AI Companion (⌘.)")
+                .help("AI Companion: ⌘. focus chat · Esc back to study")
                 .keyboardShortcut(".", modifiers: .command)
             }
         }
         .task {
             await appState.initialize()
+        }
+        .onAppear { installMouseMonitor() }
+        .onDisappear { mouseMonitor.remove() }
+    }
+
+    /// ⌘. behavior:
+    /// - panel hidden → show it and focus the chat input
+    /// - panel shown, focus in main → move focus to chat
+    /// - panel shown, focus already in chat → hide it and return to main
+    private func toggleChat() {
+        if showAIPanel {
+            if appState.focusZone == .chat {
+                showAIPanel = false
+                UserDefaults.standard.set(false, forKey: "showAIPanel")
+                appState.focusMain()
+            } else {
+                appState.focusChat()
+            }
+        } else {
+            showAIPanel = true
+            UserDefaults.standard.set(true, forKey: "showAIPanel")
+            appState.focusChat()
+        }
+    }
+
+    /// Window-level click router: clicking the chat region focuses the chat input,
+    /// clicking anywhere else returns keyboard control to the main study area.
+    /// This is what makes "click a region → keyboard goes there" deterministic.
+    private func installMouseMonitor() {
+        guard mouseMonitor.token == nil else { return }
+        let state = appState
+        mouseMonitor.token = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+            guard let window = event.window, window === state.mainWindow else { return event }
+            // Ignore clicks in the title bar / toolbar so the ⌘. toggle button (which
+            // reads `focusZone`) isn't pre-empted by this monitor.
+            if event.locationInWindow.y > window.contentLayoutRect.maxY { return event }
+            let frame = state.chatPanelFrame
+            if frame != .zero && frame.contains(event.locationInWindow) {
+                state.focusChat()
+            } else {
+                state.focusMain()
+            }
+            return event
         }
     }
 

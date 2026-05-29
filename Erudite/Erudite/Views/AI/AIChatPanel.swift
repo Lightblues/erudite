@@ -7,13 +7,9 @@ struct AIChatPanel: View {
     @Environment(AppState.self) private var appState
     @State private var viewModel: ChatViewModel
     @State private var showSessionList = false
-    @Binding var focusTrigger: Bool
-    @Binding var resignTrigger: Bool
 
-    init(runtime: AgentRuntime, focusTrigger: Binding<Bool>, resignTrigger: Binding<Bool>) {
+    init(runtime: AgentRuntime) {
         self._viewModel = State(initialValue: ChatViewModel(runtime: runtime))
-        self._focusTrigger = focusTrigger
-        self._resignTrigger = resignTrigger
     }
 
     var body: some View {
@@ -41,13 +37,13 @@ struct AIChatPanel: View {
             ChatInputView(
                 text: $viewModel.inputText,
                 isProcessing: viewModel.isProcessing,
-                focusTrigger: $focusTrigger,
-                resignTrigger: $resignTrigger,
                 onSend: viewModel.send,
                 onCancel: viewModel.cancel
             )
         }
         .background(.background)
+        // Report panel frame so the global mouse monitor can route clicks here.
+        .background(ChatRegionTracker())
     }
 
     // MARK: - Header
@@ -99,7 +95,7 @@ struct AIChatPanel: View {
             .onChange(of: showSessionList) { _, isShowing in
                 // Re-focus chat input when popover dismisses
                 if !isShowing {
-                    focusTrigger.toggle()
+                    appState.focusChat()
                 }
             }
         }
@@ -128,6 +124,7 @@ struct AIChatPanel: View {
         }
         appState.memoryStore?.resetWatermark()
         showSessionList = false
+        appState.focusChat()
     }
 
     private func deleteSession(_ id: String) {
