@@ -15,7 +15,7 @@ struct StudyView: View {
             // Keyboard capture layer (always grabs focus, handles all shortcuts)
             KeyCaptureView(
                 onKeyDown: { event in handleKeyEvent(event) },
-                isActive: appState.selectedTab == .flashcard && !showWordList
+                isActive: appState.selectedTab == .flashcard && !showWordList && appState.focusZone == .main
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }

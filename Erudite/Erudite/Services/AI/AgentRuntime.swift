@@ -127,16 +127,22 @@ final class AgentRuntime {
                 let startTime = ContinuousClock.now
                 Log.ai.info("API request: model=\(request.model), messages=\(messages.count)")
 
-                let stream = try await client.stream(
+                let (stream, requestId) = try await client.stream(
                     request: request,
                     apiKey: apiKey,
                     baseURL: AppConfig.shared.resolvedAIBaseURL
                 )
+                if let requestId {
+                    Log.ai.debug("Request ID: \(requestId)")
+                }
 
                 var accumulatedText = ""
                 var toolCalls: [PendingToolCall] = []
                 var currentToolCall: PendingToolCall?
                 var lastUIUpdate = ContinuousClock.now
+                var turnInputTokens = 0
+                var turnOutputTokens = 0
+                var turnCacheHit = false
                 let uiUpdateInterval: Duration = .milliseconds(50) // Throttle: max 20 UI updates/sec
 
                 for try await event in stream {
@@ -148,8 +154,10 @@ final class AgentRuntime {
                     switch event {
                     case .messageStart(let payload):
                         if let usage = payload.message.usage {
+                            turnInputTokens += usage.input_tokens ?? 0
                             totalInputTokens += usage.input_tokens ?? 0
                             if let cacheRead = usage.cache_read_input_tokens, cacheRead > 0 {
+                                turnCacheHit = true
                                 cacheHits += 1
                             }
                         }
@@ -189,6 +197,7 @@ final class AgentRuntime {
 
                     case .messageDelta(_, let usage):
                         if let usage {
+                            turnOutputTokens += usage.output_tokens ?? 0
                             totalOutputTokens += usage.output_tokens ?? 0
                         }
 
@@ -208,18 +217,30 @@ final class AgentRuntime {
                     // Pure text response — done
                     let elapsed = startTime.duration(to: .now)
                     let latencyMs = Int(elapsed.components.seconds * 1000 + elapsed.components.attoseconds / 1_000_000_000_000_000)
-                    Log.ai.info("Response complete: \(latencyMs)ms, tokens=\(totalOutputTokens)")
+                    Log.ai.info("Response complete: \(latencyMs)ms, in=\(turnInputTokens) out=\(turnOutputTokens)")
+
+                    let meta = TurnMeta(
+                        requestId: requestId,
+                        model: request.model,
+                        inputTokens: turnInputTokens,
+                        outputTokens: turnOutputTokens,
+                        cacheHit: turnCacheHit,
+                        latencyMs: latencyMs,
+                        toolCalls: toolCalls.map(\.name) // empty here, but included for consistency
+                    )
+
                     AITracer.shared.record(
                         model: request.model,
                         purpose: "chat",
-                        inputTokens: totalInputTokens,
-                        outputTokens: totalOutputTokens,
-                        cacheHit: cacheHits > 0,
+                        inputTokens: turnInputTokens,
+                        outputTokens: turnOutputTokens,
+                        cacheHit: turnCacheHit,
                         latencyMs: latencyMs,
                         sessionId: AppState.shared.sessionManager?.currentSession?.id
                     )
 
-                    let assistantMsg = ChatMessage(role: .assistant, text: accumulatedText)
+                    var assistantMsg = ChatMessage(role: .assistant, text: accumulatedText)
+                    assistantMsg.turnMeta = meta
                     messages.append(assistantMsg)
                     streamingText = ""
                     phase = .idle
@@ -330,6 +351,19 @@ private struct PendingToolCall {
     var inputJSON: String
 }
 
+// MARK: - Turn Metadata
+
+/// Metadata about an LLM turn (attached to assistant messages)
+struct TurnMeta {
+    let requestId: String?
+    let model: String
+    let inputTokens: Int
+    let outputTokens: Int
+    let cacheHit: Bool
+    let latencyMs: Int
+    let toolCalls: [String]
+}
+
 // MARK: - Chat Message
 
 struct ChatMessage: Identifiable {
@@ -339,6 +373,7 @@ struct ChatMessage: Identifiable {
     let blocks: [ContentBlock]
     let isToolResult: Bool
     let timestamp: Date
+    var turnMeta: TurnMeta?  // Only set on final assistant messages
 
     /// Simple text message
     init(role: MessageRole, text: String) {

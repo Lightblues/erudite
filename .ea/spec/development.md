@@ -120,3 +120,94 @@ View (SwiftUI)  ←→  ViewModel (@Observable)  ←→  Service/Repository
 - Commit messages: imperative, concise ("Add FSRS scheduling logic")
 - `.xcodeproj` changes are committed (they track deps, build settings)
 - `xcuserdata/` and `DerivedData/` are gitignored
+
+---
+
+## SwiftUI + @Observable Performance Pitfalls
+
+**Critical lessons learned.** These patterns cause infinite render loops (100% CPU, memory explosion):
+
+### 1. NEVER use computed array properties in ForEach
+
+```swift
+// ❌ BAD — creates new array every frame → SwiftUI thinks data changed → re-render → ∞
+var visibleMessages: [ChatMessage] {
+    runtime.messages.filter { !$0.isToolResult }  // NEW array each access
+}
+// In view:
+ForEach(viewModel.visibleMessages) { ... }  // infinite re-render loop
+
+// ✅ GOOD — use the stored array directly, filter inside ForEach
+ForEach(runtime.messages, id: \.id) { message in
+    if !message.isToolResult {
+        ChatMessageView(message: message)
+    }
+}
+```
+
+**Why:** `@Observable` tracks property access. A computed property returning a new `[Struct]` each time is always "different" from last frame (different reference). SwiftUI detects the change → re-renders → re-evaluates → sees "new" array again → infinite loop.
+
+**Rule:** `ForEach` must bind to a **stored** `@Observable` property (array identity stable across accesses), not a computed property that allocates.
+
+### 2. Guard onChange triggers
+
+```swift
+// ❌ BAD — fires even when idle, can cascade
+.onChange(of: viewModel.someComputedProperty) { ... }
+
+// ✅ GOOD — only react when actually relevant
+.onChange(of: viewModel.streamingText) { _, newText in
+    if viewModel.isStreaming && !newText.isEmpty {
+        proxy.scrollTo("streaming", anchor: .bottom)
+    }
+}
+```
+
+### 3. Avoid expensive per-frame operations in view body
+
+```swift
+// ❌ BAD — AttributedString(markdown:) re-parses on every re-render
+var body: some View {
+    Text(AttributedString(markdown: streamingText))  // expensive during streaming
+}
+
+// ✅ GOOD — use plain Text during streaming, markdown only for final messages
+if isStreaming {
+    Text(streamingText)  // cheap
+} else {
+    Text(AttributedString(markdown: finalText))  // one-time parse
+}
+```
+
+### 4. @Observable + struct arrays: identity matters
+
+`@Observable` tracks stored property mutations by reference identity for classes, but for struct arrays (`[ChatMessage]`), SwiftUI relies on `Identifiable.id` for diffing. The array itself is compared by **element identity** not pointer equality.
+
+The subtle trap: if your computed property creates a new array but elements have the same `id`, SwiftUI should theoretically be fine — but in practice, the observation system marks the attribute as "dirty" on every access of a computed property that touches an `@Observable` stored property, causing the render loop.
+
+### 5. Debugging SwiftUI render loops
+
+```bash
+# Sample the process to find CPU hotspot
+sample <PID> 5 -f /tmp/sample.txt
+
+# Key indicators in the sample:
+# - Main thread 99%+ in `NSRunLoop.flushObservers()` → render loop
+# - `GraphHost.runTransaction` / `AG::Subgraph::update` → attribute graph updating
+# - `ForEachState.applyNodes` → ForEach is the hot spot
+# - `NSTextFieldCell _invalidateEffectiveFont` → Text view re-measuring
+
+# Check memory growth (indicates unbounded re-render)
+grep "Physical footprint" /tmp/sample.txt
+```
+
+### Summary: Safe Patterns for This Project
+
+| Context | Pattern |
+|---------|---------|
+| ForEach data source | Always a stored `@Observable` property, never a computed array |
+| Filtering in lists | Filter inside ForEach body (`if !msg.isToolResult { ... }`) |
+| onChange | Always guard with a boolean check to prevent cascading |
+| Streaming text | Plain `Text()` during stream, `AttributedString` only on final |
+| Animation | Use declarative `.animation(.repeating)`, never `Task.sleep` loops for visual effects |
+| scrollTo | Only trigger when actually streaming/new message, not on every render |

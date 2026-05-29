@@ -55,12 +55,14 @@ struct SearchConversationsTool: AITool {
         formatter.unitsStyle = .abbreviated
 
         let items: [JSONValue] = sessions.map { row in
+            let id: String = row["id"]
             let title: String = row["title"]
             let messageCount: Int = row["messageCount"]
             let lastMessageAt: Date = row["lastMessageAt"]
             let relativeDate = formatter.localizedString(for: lastMessageAt, relativeTo: Date())
 
             return JSONValue.object([
+                "session_id": .string(id),
                 "title": .string(title),
                 "message_count": .int(messageCount),
                 "last_active": .string(relativeDate),

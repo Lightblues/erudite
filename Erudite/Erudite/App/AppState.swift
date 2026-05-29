@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import AppKit
 
 @Observable
 final class AppState {
@@ -13,6 +14,45 @@ final class AppState {
     var newCount: Int = 0
     var learnedCount: Int = 0  // cards that are no longer "new" in active book
     var studyMode: StudyQueueMode = .mixed
+
+    // MARK: - Focus Model
+    //
+    // Single source of truth for "where does the keyboard go".
+    // - `.main`: flashcard/typing keyboard control (KeyCaptureView grabs firstResponder)
+    // - `.chat`: AI chat text input (TextEditor holds firstResponder)
+    //
+    // Both KeyCaptureView and ChatInputView derive their behavior from `focusZone`,
+    // and a window-level mouse monitor updates it based on where the user clicks.
+    enum FocusZone { case main, chat }
+
+    /// Which region currently owns the keyboard.
+    var focusZone: FocusZone = .main
+
+    /// Bumped to (re)request chat-input focus, even when `focusZone` is already `.chat`
+    /// (e.g. clicking on a selectable message should pull focus back to the input).
+    var chatFocusNonce: Int = 0
+
+    /// The currently active KeyCaptureView NSView (registers itself when active).
+    /// Not observed — purely an AppKit handle for direct focus control.
+    @ObservationIgnored weak var activeKeyCapture: KeyNSView?
+
+    /// Chat panel frame in window base coordinates (.zero when panel hidden).
+    @ObservationIgnored var chatPanelFrame: CGRect = .zero
+
+    /// The main content window (used to scope the global mouse monitor).
+    @ObservationIgnored weak var mainWindow: NSWindow?
+
+    /// Move keyboard focus to the AI chat input (opening behavior handled by caller).
+    func focusChat() {
+        focusZone = .chat
+        chatFocusNonce &+= 1
+    }
+
+    /// Move keyboard focus back to the main study area and re-grab firstResponder.
+    func focusMain() {
+        focusZone = .main
+        activeKeyCapture?.grabFocus()
+    }
 
     // Multi-wordbook
     var wordBooks: [WordBook] = []

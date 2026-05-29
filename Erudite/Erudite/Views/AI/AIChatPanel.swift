@@ -33,7 +33,7 @@ struct AIChatPanel: View {
 
             Divider()
 
-            // Input
+            // Input (always editable — even during streaming)
             ChatInputView(
                 text: $viewModel.inputText,
                 isProcessing: viewModel.isProcessing,
@@ -41,8 +41,9 @@ struct AIChatPanel: View {
                 onCancel: viewModel.cancel
             )
         }
-        .frame(minWidth: 260, idealWidth: 280, maxWidth: 360)
         .background(.background)
+        // Report panel frame so the global mouse monitor can route clicks here.
+        .background(ChatRegionTracker())
     }
 
     // MARK: - Header
@@ -91,6 +92,12 @@ struct AIChatPanel: View {
                     onNewSession: { createNewSession() }
                 )
             }
+            .onChange(of: showSessionList) { _, isShowing in
+                // Re-focus chat input when popover dismisses
+                if !isShowing {
+                    appState.focusChat()
+                }
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -117,6 +124,7 @@ struct AIChatPanel: View {
         }
         appState.memoryStore?.resetWatermark()
         showSessionList = false
+        appState.focusChat()
     }
 
     private func deleteSession(_ id: String) {
@@ -165,12 +173,18 @@ struct AIChatPanel: View {
     // MARK: - Message List
 
     private var messageList: some View {
-        ScrollViewReader { proxy in
+        // Use runtime.messages directly with ForEach + filter in the view body
+        // to avoid creating new array on each evaluation (which causes infinite re-render)
+        let messages = appState.aiRuntime?.messages ?? []
+
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
-                    ForEach(viewModel.visibleMessages) { message in
-                        ChatMessageView(message: message)
-                            .id(message.id)
+                    ForEach(messages, id: \.id) { message in
+                        if !message.isToolResult {
+                            ChatMessageView(message: message)
+                                .id(message.id)
+                        }
                     }
 
                     // Streaming text (in-progress)
@@ -188,11 +202,15 @@ struct AIChatPanel: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
             }
-            .onChange(of: viewModel.streamingText) { _, _ in
-                proxy.scrollTo("streaming", anchor: .bottom)
+            .onChange(of: viewModel.streamingText) { _, newText in
+                // Only auto-scroll during active streaming
+                if viewModel.isStreaming && !newText.isEmpty {
+                    proxy.scrollTo("streaming", anchor: .bottom)
+                }
             }
-            .onChange(of: viewModel.visibleMessages.count) { _, _ in
-                if let last = viewModel.visibleMessages.last {
+            .onChange(of: viewModel.messageCount) { _, _ in
+                // Scroll to bottom when new message arrives
+                if let last = messages.last(where: { !$0.isToolResult }) {
                     proxy.scrollTo(last.id, anchor: .bottom)
                 }
             }

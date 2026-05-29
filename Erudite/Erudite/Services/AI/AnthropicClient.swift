@@ -19,11 +19,12 @@ final class AnthropicClient {
     /// Send a streaming request to the Messages API.
     /// Returns an AsyncThrowingStream that yields parsed StreamEvents.
     /// Supports both official Anthropic API (x-api-key) and compatible proxies (Bearer token).
+    /// The `requestId` from response headers is yielded as the first event via `.messageStart`.
     func stream(
         request: AnthropicRequest,
         apiKey: String,
         baseURL: String? = nil
-    ) async throws -> AsyncThrowingStream<StreamEvent, Error> {
+    ) async throws -> (stream: AsyncThrowingStream<StreamEvent, Error>, requestId: String?) {
         let urlString = baseURL ?? "https://api.anthropic.com/v1/messages"
         guard let url = URL(string: urlString) else {
             throw AIClientError.httpError(status: 0, message: "Invalid URL: \(urlString)")
@@ -56,6 +57,10 @@ final class AnthropicClient {
             throw AIClientError.invalidResponse
         }
 
+        // Capture request-id from response headers
+        let requestId = httpResponse.value(forHTTPHeaderField: "x-request-id")
+            ?? httpResponse.value(forHTTPHeaderField: "request-id")
+
         // Handle error status codes
         if httpResponse.statusCode != 200 {
             let errorBody = try await collectBytes(bytes)
@@ -63,7 +68,7 @@ final class AnthropicClient {
         }
 
         // Return async stream that parses SSE events from the byte stream
-        return AsyncThrowingStream { continuation in
+        let eventStream: AsyncThrowingStream<StreamEvent, Error> = AsyncThrowingStream { continuation in
             let task = Task {
                 var parser = SSEParser()
                 // Buffer bytes and process at line boundaries.
@@ -119,6 +124,8 @@ final class AnthropicClient {
                 task.cancel()
             }
         }
+
+        return (stream: eventStream, requestId: requestId)
     }
 
     // MARK: - Helpers

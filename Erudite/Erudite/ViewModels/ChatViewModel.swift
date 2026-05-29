@@ -26,6 +26,11 @@ final class ChatViewModel {
         runtime.messages.filter { !$0.isToolResult }
     }
 
+    /// Stable count for onChange tracking (avoids recomputing array for comparison)
+    var messageCount: Int {
+        runtime.messages.count
+    }
+
     /// Current streaming text being generated
     var streamingText: String {
         runtime.streamingText
