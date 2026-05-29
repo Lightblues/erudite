@@ -26,24 +26,25 @@ struct ContentView: View {
 
             // AI Panel (right side) with draggable width
             if showAIPanel, let runtime = appState.aiRuntime {
-                // Drag handle
-                Rectangle()
-                    .fill(Color.clear)
-                    .frame(width: 5)
-                    .contentShape(Rectangle())
-                    .cursor(.resizeLeftRight)
-                    .gesture(
-                        DragGesture(minimumDistance: 1)
-                            .onChanged { value in
-                                let newWidth = aiPanelWidth - value.translation.width
-                                aiPanelWidth = min(max(newWidth, 240), 500)
-                            }
-                            .onEnded { _ in
-                                UserDefaults.standard.set(Double(aiPanelWidth), forKey: "aiPanelWidth")
-                            }
-                    )
-
+                // Divider with drag handle overlay
                 Divider()
+                    .overlay {
+                        Rectangle()
+                            .fill(Color.clear)
+                            .frame(width: 8)
+                            .contentShape(Rectangle())
+                            .cursor(.resizeLeftRight)
+                            .gesture(
+                                DragGesture(minimumDistance: 1)
+                                    .onChanged { value in
+                                        let newWidth = aiPanelWidth - value.translation.width
+                                        aiPanelWidth = min(max(newWidth, 240), 500)
+                                    }
+                                    .onEnded { _ in
+                                        UserDefaults.standard.set(Double(aiPanelWidth), forKey: "aiPanelWidth")
+                                    }
+                            )
+                    }
 
                 AIChatPanel(runtime: runtime)
                     .frame(width: aiPanelWidth)

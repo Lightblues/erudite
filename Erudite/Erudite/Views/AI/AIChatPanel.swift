@@ -33,15 +33,15 @@ struct AIChatPanel: View {
 
             Divider()
 
-            // Input
+            // Input (auto-focuses)
             ChatInputView(
                 text: $viewModel.inputText,
                 isProcessing: viewModel.isProcessing,
+                shouldFocus: !viewModel.isProcessing,
                 onSend: viewModel.send,
                 onCancel: viewModel.cancel
             )
         }
-        .frame(minWidth: 260, idealWidth: 280, maxWidth: 360)
         .background(.background)
     }
 

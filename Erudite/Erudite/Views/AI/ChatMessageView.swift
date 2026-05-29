@@ -112,30 +112,27 @@ struct ChatMessageView: View {
 
     private func toolDetailRow(_ detail: ToolCallDetail) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            // Tool name + input
+            // Tool name
             Text("→ \(detail.name)")
                 .font(.system(.caption2, design: .monospaced))
                 .foregroundStyle(.orange)
 
+            // Input params
             if !detail.input.isEmpty && detail.input != "{}" {
-                ScrollView(.vertical) {
-                    Text("  input: \(detail.input)")
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-                .frame(maxHeight: 60)
+                Text("  input: \(detail.input)")
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            // Result (if available)
+            // Result
             if let result = detail.result {
-                ScrollView(.vertical) {
-                    Text("  → \(result)")
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundStyle(.green.opacity(0.8))
-                        .textSelection(.enabled)
-                }
-                .frame(maxHeight: 100)
+                Text("  → \(result)")
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.green.opacity(0.8))
+                    .textSelection(.enabled)
+                    .lineLimit(8)
             }
         }
     }

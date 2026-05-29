@@ -2,10 +2,11 @@ import SwiftUI
 
 // MARK: - Chat Input View
 
-/// Text input field with send/cancel button.
+/// Text input field with send/cancel button. Auto-focuses when panel is active.
 struct ChatInputView: View {
     @Binding var text: String
     let isProcessing: Bool
+    let shouldFocus: Bool
     let onSend: () -> Void
     let onCancel: () -> Void
 
@@ -45,6 +46,16 @@ struct ChatInputView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+        .onAppear {
+            // Auto-focus on appear
+            isFocused = true
+        }
+        .onChange(of: shouldFocus) { _, newValue in
+            // Re-focus after streaming ends
+            if newValue {
+                isFocused = true
+            }
+        }
     }
 
     private var canSend: Bool {
