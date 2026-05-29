@@ -6,7 +6,7 @@ struct ContentView: View {
     @Environment(AppState.self) private var appState
     @State private var showAIPanel: Bool = UserDefaults.standard.bool(forKey: "showAIPanel")
     @State private var aiPanelWidth: CGFloat = CGFloat(UserDefaults.standard.double(forKey: "aiPanelWidth").clamped(to: 240...500, default: 300))
-    @State private var chatFocusTrigger: Bool = false  // Toggled to force-focus chat input
+    @State private var chatFocusTrigger: Bool = false
 
     var body: some View {
         @Bindable var state = appState
@@ -53,29 +53,33 @@ struct ContentView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: showAIPanel)
-        .onKeyPress("/") {
-            // Global "/" shortcut: show AI panel + focus input
-            // Only active when NOT in keyboard-intensive modes (flashcard/typing)
-            guard appState.selectedTab != .flashcard && appState.selectedTab != .typing else {
-                return .ignored
-            }
-            if !showAIPanel {
-                showAIPanel = true
-                UserDefaults.standard.set(true, forKey: "showAIPanel")
-            }
-            chatFocusTrigger.toggle()
-            return .handled
-        }
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Button {
                     showAIPanel.toggle()
                     UserDefaults.standard.set(showAIPanel, forKey: "showAIPanel")
+                    if showAIPanel {
+                        chatFocusTrigger.toggle()
+                    }
                 } label: {
                     Image(systemName: showAIPanel ? "sidebar.right" : "sparkles")
                 }
                 .help("Toggle AI Companion (⌘.)")
                 .keyboardShortcut(".", modifiers: .command)
+            }
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    // ⌘L: Focus chat input (show panel if needed)
+                    if !showAIPanel {
+                        showAIPanel = true
+                        UserDefaults.standard.set(true, forKey: "showAIPanel")
+                    }
+                    chatFocusTrigger.toggle()
+                } label: {
+                    // Invisible button — just for the keyboard shortcut
+                    EmptyView()
+                }
+                .keyboardShortcut("l", modifiers: .command)
             }
         }
         .task {

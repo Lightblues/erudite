@@ -14,6 +14,9 @@ final class AppState {
     var learnedCount: Int = 0  // cards that are no longer "new" in active book
     var studyMode: StudyQueueMode = .mixed
 
+    /// Whether the chat input is currently focused (used by KeyCaptureView to yield)
+    var isChatInputActive: Bool = false
+
     // Multi-wordbook
     var wordBooks: [WordBook] = []
     var activeBookId: String? = UserDefaults.standard.string(forKey: "activeBookId") {

@@ -3,9 +3,9 @@ import SwiftUI
 // MARK: - Chat Input View
 
 /// Text input field with send/cancel button.
-/// Receives focus via `focusTrigger` (toggled externally, e.g. by "/" shortcut).
 /// Shift+Enter for newline, Enter to send.
 /// Always editable — even during streaming (user can prepare next message).
+/// Focus managed via `focusTrigger` (toggled by ⌘. or session switch).
 struct ChatInputView: View {
     @Binding var text: String
     let isProcessing: Bool
@@ -13,6 +13,7 @@ struct ChatInputView: View {
     let onSend: () -> Void
     let onCancel: () -> Void
 
+    @Environment(AppState.self) private var appState
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -25,14 +26,12 @@ struct ChatInputView: View {
                 .focused($isFocused)
                 .onKeyPress(.return, phases: .down) { keyPress in
                     if keyPress.modifiers.contains(.shift) {
-                        // Shift+Enter: insert newline
-                        return .ignored
+                        return .ignored  // Shift+Enter: newline
                     } else {
-                        // Enter: send (only if not processing and has text)
                         if canSend && !isProcessing {
                             onSend()
                         }
-                        return .handled
+                        return .handled  // Enter: send (or no-op if empty/processing)
                     }
                 }
 
@@ -43,7 +42,7 @@ struct ChatInputView: View {
                         .foregroundStyle(.red)
                 }
                 .buttonStyle(.borderless)
-                .help("Stop generating (then send)")
+                .help("Stop generating")
             } else {
                 Button(action: onSend) {
                     Image(systemName: "arrow.up.circle.fill")
@@ -61,14 +60,12 @@ struct ChatInputView: View {
             isFocused = true
         }
         .onChange(of: focusTrigger) { _, _ in
-            // External focus request (e.g. "/" shortcut, session switch)
+            // Focus requested externally (⌘., session switch, popover dismiss)
             isFocused = true
         }
-        .onChange(of: isProcessing) { _, newValue in
-            // Re-focus after streaming ends
-            if !newValue {
-                isFocused = true
-            }
+        .onChange(of: isFocused) { _, focused in
+            // Report focus state so KeyCaptureView knows to yield
+            appState.isChatInputActive = focused
         }
     }
 
