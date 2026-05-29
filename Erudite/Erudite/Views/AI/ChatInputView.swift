@@ -2,11 +2,12 @@ import SwiftUI
 
 // MARK: - Chat Input View
 
-/// Text input field with send/cancel button. Auto-focuses when panel is active.
+/// Text input field with send/cancel button.
+/// Always captures keyboard input (like Claude.app) — even while scrolling or selecting text.
+/// Shift+Enter for newline, Enter to send.
 struct ChatInputView: View {
     @Binding var text: String
     let isProcessing: Bool
-    let shouldFocus: Bool
     let onSend: () -> Void
     let onCancel: () -> Void
 
@@ -14,16 +15,25 @@ struct ChatInputView: View {
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            TextField("Ask anything...", text: $text, axis: .vertical)
-                .textFieldStyle(.plain)
-                .lineLimit(1...5)
+            // Use a custom key-handling wrapper around TextField
+            TextEditor(text: $text)
+                .font(.body)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 20, maxHeight: 100)
+                .fixedSize(horizontal: false, vertical: true)
                 .focused($isFocused)
-                .onSubmit {
-                    if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        onSend()
+                .onKeyPress(.return, phases: .down) { keyPress in
+                    if keyPress.modifiers.contains(.shift) {
+                        // Shift+Enter: insert newline (let default handling proceed)
+                        return .ignored
+                    } else {
+                        // Enter: send message
+                        if canSend && !isProcessing {
+                            onSend()
+                        }
+                        return .handled
                     }
                 }
-                .disabled(isProcessing)
 
             if isProcessing {
                 Button(action: onCancel) {
@@ -32,7 +42,7 @@ struct ChatInputView: View {
                         .foregroundStyle(.red)
                 }
                 .buttonStyle(.borderless)
-                .help("Stop generating")
+                .help("Stop generating (then send)")
             } else {
                 Button(action: onSend) {
                     Image(systemName: "arrow.up.circle.fill")
@@ -45,14 +55,13 @@ struct ChatInputView: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
         .onAppear {
-            // Auto-focus on appear
             isFocused = true
         }
-        .onChange(of: shouldFocus) { _, newValue in
+        .onChange(of: isProcessing) { _, newValue in
             // Re-focus after streaming ends
-            if newValue {
+            if !newValue {
                 isFocused = true
             }
         }

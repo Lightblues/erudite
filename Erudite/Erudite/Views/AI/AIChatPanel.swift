@@ -33,11 +33,10 @@ struct AIChatPanel: View {
 
             Divider()
 
-            // Input (auto-focuses)
+            // Input (always editable — even during streaming)
             ChatInputView(
                 text: $viewModel.inputText,
                 isProcessing: viewModel.isProcessing,
-                shouldFocus: !viewModel.isProcessing,
                 onSend: viewModel.send,
                 onCancel: viewModel.cancel
             )
