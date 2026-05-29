@@ -204,6 +204,87 @@ study area and the AI chat panel. Several attempts before landing the final mode
 
 ---
 
+## 2026-05-29 — `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` cascading isolation errors
+
+Opening the project after the AI Companion work, Xcode lit up with 14 errors/warnings
+clustered around `DatabaseService` and the FSRS scheduler:
+
+- "Main actor-isolated conformance of `Word` to `Encodable`/`Decodable` cannot be
+  used in nonisolated(unsafe) context" (×7, every encode/decode site)
+- "Call to main actor-isolated initializer in a synchronous nonisolated(unsafe)
+  context" — `ReviewCard.init`, `ReviewLog.init`, `WordBook.init` inside row→model
+  conversions
+- "Main actor-isolated static property `default` cannot be referenced from a
+  nonisolated context" — `init(parameters: FSRSParameters = .default)`
+- "`nonisolated(unsafe)` has no effect on class `DatabaseService`, consider using
+  `nonisolated`"
+- Bonus red herring: `StudyView.swift` reported "cannot find `navigationPreview`
+  in scope" + "cannot infer contextual base in reference to member `top`" against
+  private vars that were obviously defined right there.
+
+### Root cause
+
+The project sets `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` (Swift 6.2 /
+SE-0466), so every type without an explicit isolation annotation is implicitly
+`@MainActor` — **including its `Codable` conformance and its `init`**. This is
+correct for UI / ViewModels but wrong for pure value types (`Word`, `ReviewCard`,
+`ReviewLog`, `WordBook`, `FSRSParameters`).
+
+`DatabaseService` is `nonisolated(unsafe)` because GRDB IO must run off the main
+thread. Inside `dbQueue.read/write { db in ... }`, every
+`JSONDecoder.decode(Word.self, …)` and `ReviewCard(...)` call crossed an
+isolation boundary that the implicit-MainActor inference had quietly erected
+around our data layer.
+
+The `StudyView` errors were **downstream symptoms**: once `Word`/`ReviewCard`
+fail to type-check, the closures in `studyContent` lose all their inferred types
+and SwiftUI's `@ViewBuilder` collapses, producing nonsense errors against
+unrelated `private var`s in the same struct.
+
+### Fix
+
+Mark all pure value types `nonisolated`:
+
+| File | Types |
+|------|-------|
+| `Models/Word.swift` | `Word`, `Definition`, `MorphemeBreakdown`, `Morpheme`, `MorphemeType`, `Example`, `Sentiment`, `FrequencyTier` |
+| `Models/ReviewCard.swift` | `ReviewCard`, `CardState`, `Rating`, `ReviewLog` |
+| `Models/WordList.swift` | `WordBook` |
+| `Engine/FSRS/FSRSParameters.swift` | `FSRSParameters` |
+
+And drop the redundant `(unsafe)`:
+
+```swift
+// before
+nonisolated(unsafe) final class DatabaseService: Sendable { ... }
+// after
+nonisolated final class DatabaseService: Sendable { ... }
+```
+
+`xcodebuild` went from 14 diagnostics to 0; the `StudyView` errors disappeared
+automatically the moment the upstream types compiled cleanly.
+
+### Takeaways
+
+- Under `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, the right mental model is:
+  **UI/ViewModels stay default, pure data values + cross-thread services must be
+  explicitly `nonisolated`.** The default is wrong for data types because their
+  protocol conformances and inits inherit isolation too — invisible until a
+  background actor tries to use them.
+- `nonisolated(unsafe)` on a `Sendable` class is a code smell — it almost always
+  means "I gave up; please ignore the rules". `nonisolated` (without `(unsafe)`)
+  is the right answer when the class genuinely is safe.
+- SwiftUI errors like "cannot find X in scope" against a sibling `private var`,
+  or "cannot infer contextual base" on `.padding(.top, _)`, are usually
+  **downstream symptoms** of upstream type failure. Fix the real type errors
+  first; the SwiftUI noise clears itself. Don't chase them.
+- The Xcode Issue Navigator can keep stale diagnostics across builds (referring
+  to keywords like `nonisolated(unsafe)` you've already removed). Trust
+  `xcodebuild` from the CLI, not the IDE panel — `⌘B` (or Clean Build Folder)
+  re-syncs it.
+
+---
+
 ## Cross-cutting principles
 
 | Theme | Principle |
@@ -214,3 +295,4 @@ study area and the AI chat panel. Several attempts before landing the final mode
 | AI providers | Make a configurable base URL/model; suspect provider fidelity for tool-call failures; degrade gracefully at limits. |
 | Observability | Tracing/IDs/usage + an in-app debug panel are not optional for a self-built agent. |
 | Lifecycle triggers | Combine count thresholds with lifecycle-event flushes for unreliable "end of X" events. |
+| Concurrency | Under default-MainActor isolation, pure value types and cross-thread services must be explicitly `nonisolated`; SwiftUI errors against sibling vars are usually downstream symptoms — fix the upstream type first. |
