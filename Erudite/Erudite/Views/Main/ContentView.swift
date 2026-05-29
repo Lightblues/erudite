@@ -57,21 +57,15 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Button {
-                    // ⌘. three-state toggle:
-                    // 1. Panel closed → open + focus input
-                    // 2. Panel open, focus NOT in chat → focus input
-                    // 3. Panel open, focus IN chat → close panel
-                    if !showAIPanel {
-                        showAIPanel = true
-                        UserDefaults.standard.set(true, forKey: "showAIPanel")
+                    // ⌘. simple toggle: open+focus / close
+                    showAIPanel.toggle()
+                    UserDefaults.standard.set(showAIPanel, forKey: "showAIPanel")
+                    if showAIPanel {
+                        // Pre-set so KeyCaptureView yields immediately
+                        appState.isChatInputActive = true
                         chatFocusTrigger.toggle()
-                    } else if appState.isChatInputActive {
-                        // Already focused in chat → close panel
-                        showAIPanel = false
-                        UserDefaults.standard.set(false, forKey: "showAIPanel")
                     } else {
-                        // Panel open but focus elsewhere → focus chat
-                        chatFocusTrigger.toggle()
+                        appState.isChatInputActive = false
                     }
                 } label: {
                     Image(systemName: showAIPanel ? "sidebar.right" : "sparkles")

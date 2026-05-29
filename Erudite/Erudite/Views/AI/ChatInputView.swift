@@ -62,8 +62,12 @@ struct ChatInputView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        .onAppear {
+            // Auto-focus when panel first opens
+            isFocused = true
+        }
         .onChange(of: focusTrigger) { _, _ in
-            // Focus requested externally (⌘., session switch)
+            // Focus requested externally (⌘., session switch, tap on messages)
             isFocused = true
         }
         .onChange(of: resignTrigger) { _, _ in
