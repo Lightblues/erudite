@@ -37,6 +37,8 @@ struct StudyView: View {
                 emptyState
             case .studying:
                 studyContent
+            case .unitComplete:
+                unitCompleteState
             case .complete:
                 completeState
             }
@@ -48,10 +50,26 @@ struct StudyView: View {
     // MARK: - Key Handling (via KeyCaptureView — always has focus)
 
     private func handleKeyEvent(_ event: KeyEvent) -> Bool {
-        // Escape: deactivate (pause) from studying
+        // Escape: deactivate (pause) from studying. From .unitComplete, Esc
+        // ends the session (the user's "I'm done" exit).
         if event.isEscape {
             if viewModel.phase == .studying {
                 viewModel.deactivate()
+            } else if viewModel.phase == .unitComplete {
+                viewModel.endSession()
+            }
+            return true
+        }
+
+        // Unit complete: Space/Return to continue, Q to stop.
+        if viewModel.phase == .unitComplete {
+            if event.isSpace || event.isReturn {
+                viewModel.continueAfterUnit()
+                return true
+            }
+            if event.char == "q" {
+                viewModel.endSession()
+                return true
             }
             return true
         }
@@ -546,6 +564,102 @@ struct StudyView: View {
 
             Text("No cards due for review.\nNew cards will be available tomorrow.")
                 .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Unit Complete State (between units)
+    //
+    // Shown after every `unitSize` ratings. Compact summary card so the user
+    // gets a sense of progress without losing momentum, with a clear
+    // Continue / Stop choice. Default to Continue (Space/Return).
+
+    private var unitCompleteState: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                // Header
+                VStack(spacing: 4) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 36))
+                        .foregroundStyle(.green)
+                    Text("Unit \(viewModel.unitsCompleted) complete")
+                        .font(.title2.weight(.bold))
+                    Text("Take a breath — \(viewModel.cardsRemaining) cards left")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                // Per-unit stats
+                let unitAgainCount = viewModel.unitResults.filter { $0.rating == .again }.count
+                let unitAccuracy: Double = viewModel.unitResults.isEmpty
+                    ? 0
+                    : Double(viewModel.unitResults.count - unitAgainCount) / Double(viewModel.unitResults.count)
+                HStack(spacing: 28) {
+                    unitStat(value: "\(viewModel.unitResults.count)", label: "Cards", color: .blue)
+                    unitStat(value: formatDuration(viewModel.unitDuration), label: "Time", color: .purple)
+                    unitStat(value: "\(Int(unitAccuracy * 100))%", label: "Accuracy", color: unitAccuracy >= 0.8 ? .green : .orange)
+                    unitStat(value: "\(unitAgainCount)", label: "Again", color: unitAgainCount == 0 ? .secondary : .red)
+                }
+                .padding(.vertical, 12)
+                .padding(.horizontal, 16)
+                .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
+
+                // Mini-grid of words rated this unit
+                if !viewModel.unitResults.isEmpty {
+                    let columns = [GridItem(.adaptive(minimum: 90), spacing: 6)]
+                    LazyVGrid(columns: columns, spacing: 6) {
+                        ForEach(Array(viewModel.unitResults.enumerated()), id: \.offset) { _, r in
+                            Text(r.word.spelling)
+                                .font(.caption.monospaced())
+                                .lineLimit(1)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(ratingColor(r.rating).opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
+                                .foregroundStyle(ratingColor(r.rating))
+                        }
+                    }
+                    .frame(maxWidth: 540)
+                }
+
+                // Actions
+                HStack(spacing: 12) {
+                    Button {
+                        viewModel.continueAfterUnit()
+                    } label: {
+                        Label("Continue", systemImage: "arrow.right.circle.fill")
+                            .frame(width: 140)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .keyboardShortcut(.defaultAction)
+
+                    Button {
+                        viewModel.endSession()
+                    } label: {
+                        Label("Stop", systemImage: "stop.circle")
+                            .frame(width: 100)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                }
+
+                Text("Space / Return to continue · Esc / Q to stop")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(32)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func unitStat(value: String, label: String, color: Color) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(color)
+                .monospacedDigit()
+            Text(label)
+                .font(.caption2)
                 .foregroundStyle(.secondary)
         }
     }

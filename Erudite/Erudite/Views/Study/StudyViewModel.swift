@@ -10,10 +10,11 @@ final class StudyViewModel {
 
     enum Phase {
         case loading
-        case idle       // paused — press Space to resume
+        case idle           // paused — press Space to resume
         case studying
-        case empty      // no cards available
-        case complete   // session finished
+        case unitComplete   // finished a unit (10–15 cards) — show summary, await Continue/Stop
+        case empty          // no cards available
+        case complete       // session finished (queue exhausted or user stopped)
     }
 
     // MARK: - State
@@ -24,13 +25,39 @@ final class StudyViewModel {
     var isRevealed: Bool = false
     var schedulingResult: FSRSEngine.SchedulingResult?
 
-    // Session stats
+    // Session stats (whole session, across units)
     var cardsStudied: Int = 0
     var cardsRemaining: Int = 0
     var sessionStartTime: Date = Date()
 
     // Session results for summary
     var reviewResults: [(word: Word, rating: Rating)] = []
+
+    // MARK: - Unit chunking
+    //
+    // The user sees the session in "units" of `unitSize` cards. Hitting the
+    // unit boundary transitions to `.unitComplete` and we show a summary
+    // card; pressing Continue (Space/Return) starts the next unit. The unit
+    // is purely a UX layer — FSRS scheduling never sees it. Defaults to 12,
+    // which fits about 5–7 minutes of study per unit (the empirical sweet
+    // spot for "feel of progress" without giving up).
+
+    var unitSize: Int {
+        didSet {
+            UserDefaults.standard.set(unitSize, forKey: "study_unitSize")
+        }
+    }
+    /// 1-based count of completed units in this session.
+    var unitsCompleted: Int = 0
+    /// Cards rated since the start of the current unit. Resets to 0 when we
+    /// transition past `.unitComplete` back to `.studying`.
+    var cardsThisUnit: Int = 0
+    /// Word/rating pairs collected within the current unit, used by the
+    /// unit-complete summary card. Cleared at the start of each unit.
+    var unitResults: [(word: Word, rating: Rating)] = []
+    /// Time the current unit started — drives the "took X seconds" line on
+    /// the summary card.
+    var unitStartTime: Date = Date()
 
     // MARK: - Settings (persisted, shared with Typing)
 
@@ -84,6 +111,8 @@ final class StudyViewModel {
     init() {
         self.accent = TypingViewModel.Accent(rawValue: UserDefaults.standard.string(forKey: "typing_accent") ?? "") ?? .us
         self.loopPronunciation = UserDefaults.standard.bool(forKey: "typing_loopPronunciation")
+        let storedUnitSize = UserDefaults.standard.integer(forKey: "study_unitSize")
+        self.unitSize = storedUnitSize > 0 ? storedUnitSize : 12
         self.pronunciation.voice = accent == .us ? PronunciationService.Voice.us : PronunciationService.Voice.uk
     }
 
@@ -96,6 +125,10 @@ final class StudyViewModel {
         self.cardsStudied = 0
         self.history = []
         self.reviewResults = []
+        self.unitsCompleted = 0
+        self.cardsThisUnit = 0
+        self.unitResults = []
+        self.unitStartTime = Date()
         pronunciation.voice = accent == .us ? PronunciationService.Voice.us : PronunciationService.Voice.uk
         pronunciation.clearCache()
         loadQueue(mode: mode)
@@ -165,10 +198,65 @@ final class StudyViewModel {
         }
 
         cardsStudied += 1
+        cardsThisUnit += 1
         if let word = currentWord {
             reviewResults.append((word: word, rating: rating))
+            unitResults.append((word: word, rating: rating))
+        }
+
+        // If queue is empty, run the normal advance which transitions to
+        // .complete; otherwise check for unit boundary first so the unit
+        // summary card always shows before the queue is exhausted.
+        if cardsThisUnit >= unitSize && !cardQueue.isEmpty {
+            // Push current to history (advanceToNext does this; we need it
+            // here too so go-back works after pressing Continue).
+            if let card = currentCard {
+                history.append((card: card, word: currentWord))
+            }
+            stopLoop()
+            pronunciation.stop()
+            unitsCompleted += 1
+            phase = .unitComplete
+            return
         }
         advanceToNext()
+    }
+
+    /// Called when the user presses Continue on the unit summary card. Resets
+    /// the per-unit counters and pulls the next card from the queue.
+    func continueAfterUnit() {
+        guard phase == .unitComplete else { return }
+        cardsThisUnit = 0
+        unitResults = []
+        unitStartTime = Date()
+        phase = .studying
+        // We already pushed the previous card to history in rate(); here we
+        // just want the next card without double-pushing, so manually drive
+        // the same path as advanceToNext but skip the history append.
+        guard !cardQueue.isEmpty else {
+            phase = .complete
+            return
+        }
+        let card = cardQueue.removeFirst()
+        currentCard = card
+        currentWord = wordCache[card.wordId]
+        isRevealed = false
+        schedulingResult = nil
+        cardsRemaining = cardQueue.count
+        if let word = currentWord {
+            pronunciation.speak(word.spelling)
+            startLoopIfNeeded()
+            if let nextCard = cardQueue.first,
+               let nextWord = wordCache[nextCard.wordId] {
+                pronunciation.prefetch(nextWord.spelling)
+            }
+        }
+    }
+
+    /// Convenience: time spent on the unit just finished. Used by the
+    /// unit-summary view.
+    var unitDuration: TimeInterval {
+        Date().timeIntervalSince(unitStartTime)
     }
 
     /// Replay pronunciation for current word
