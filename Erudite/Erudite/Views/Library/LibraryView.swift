@@ -130,7 +130,7 @@ struct LibraryView: View {
         VStack(spacing: 0) {
             List(summaries) { summary in
                 NavigationLink(value: summary.id) {
-                    WordRow(summary: summary)
+                    WordSummaryRow(summary: summary)
                 }
             }
             .listStyle(.inset)
@@ -235,98 +235,6 @@ struct LibraryView: View {
             self.loadedCount += page.count
         } catch {
             print("Library loadMore failed: \(error)")
-        }
-    }
-}
-
-// MARK: - Word Row
-
-private struct WordRow: View {
-    let summary: WordSummary
-
-    var body: some View {
-        HStack(spacing: 12) {
-            tierBadge
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(summary.spelling)
-                        .font(.headline)
-                    if let phonetic = summary.phonetic, !phonetic.isEmpty {
-                        Text(phonetic)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                if summary.firstDefZh != nil || summary.posLabel != nil {
-                    HStack(spacing: 4) {
-                        if let pos = summary.posLabel, !pos.isEmpty {
-                            Text(pos)
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 3))
-                        }
-                        if let def = summary.firstDefZh, !def.isEmpty {
-                            Text(def)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
-                }
-            }
-
-            Spacer()
-
-            if summary.hasMnemonic {
-                Image(systemName: "lightbulb.fill")
-                    .font(.caption)
-                    .foregroundStyle(.yellow)
-            }
-
-            stateBadge
-        }
-        .padding(.vertical, 4)
-    }
-
-    private var tierBadge: some View {
-        let (color, label): (Color, String) = switch summary.frequency {
-        case .core: (.red, "C")
-        case .common: (.blue, "M")
-        case .advanced: (.gray, "A")
-        }
-        return Text(label)
-            .font(.caption2.bold())
-            .foregroundStyle(.white)
-            .frame(width: 20, height: 20)
-            .background(color, in: Circle())
-    }
-
-    @ViewBuilder
-    private var stateBadge: some View {
-        if let state = summary.cardState {
-            let (color, label): (Color, String) = switch state {
-            case .new: (.gray, "New")
-            case .learning: (.orange, "Learning")
-            case .review: (.green, "Review")
-            case .relearning: (.red, "Relearn")
-            }
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(color)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(color.opacity(0.12), in: Capsule())
-        } else {
-            Text("New")
-                .font(.caption2)
-                .foregroundStyle(.gray)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(.gray.opacity(0.12), in: Capsule())
         }
     }
 }

@@ -17,6 +17,7 @@ nonisolated struct WordSummary: Identifiable, Hashable {
     let posLabel: String?       // first part-of-speech ("adj", "v", ...)
     let hasMnemonic: Bool       // any builtin mnemonic available
     let cardState: CardState?   // nil if no ReviewCard exists yet
+    let dueDate: Date?          // populated only when the query joins reviewCard
 
     init(
         id: String,
@@ -26,7 +27,8 @@ nonisolated struct WordSummary: Identifiable, Hashable {
         firstDefZh: String? = nil,
         posLabel: String? = nil,
         hasMnemonic: Bool = false,
-        cardState: CardState? = nil
+        cardState: CardState? = nil,
+        dueDate: Date? = nil
     ) {
         self.id = id
         self.spelling = spelling
@@ -36,6 +38,7 @@ nonisolated struct WordSummary: Identifiable, Hashable {
         self.posLabel = posLabel
         self.hasMnemonic = hasMnemonic
         self.cardState = cardState
+        self.dueDate = dueDate
     }
 }
 

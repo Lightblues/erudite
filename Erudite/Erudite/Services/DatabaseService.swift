@@ -301,22 +301,7 @@ nonisolated final class DatabaseService: Sendable {
                 sort: sort, limit: limit, offset: offset, countOnly: false
             )
             let rows = try Row.fetchAll(db, sql: sql, arguments: args)
-            return rows.map { row in
-                let frequencyRaw = (row["frequency"] as? Int) ?? FrequencyTier.common.rawValue
-                let frequency = FrequencyTier(rawValue: frequencyRaw) ?? .common
-                let stateRaw = row["cardState"] as? Int
-                let cardState = stateRaw.flatMap { CardState(rawValue: $0) }
-                return WordSummary(
-                    id: row["id"],
-                    spelling: row["spelling"],
-                    phonetic: row["phonetic"],
-                    frequency: frequency,
-                    firstDefZh: row["firstDefZh"],
-                    posLabel: row["posLabel"],
-                    hasMnemonic: (row["hasMnemonic"] as? Int) == 1,
-                    cardState: cardState
-                )
-            }
+            return rows.map(Self.rowToSummary)
         }
     }
 
@@ -445,6 +430,284 @@ nonisolated final class DatabaseService: Sendable {
             .filter { !$0.isEmpty }
             .joined(separator: " ")
         return (sql, StatementArguments(args))
+    }
+
+    // MARK: - WordSummary convenience queries (Today / Plan)
+
+    /// Words that are due for review now, projected as summaries (sorted by dueDate).
+    /// Used by Today preview and Plan due-backlog. Excludes new cards.
+    func fetchDueSummaries(now: Date = Date(), inBook bookId: String? = nil, limit: Int = 50) throws -> [WordSummary] {
+        try dbQueue.read { db in
+            var args: [DatabaseValueConvertible] = []
+            var from = "FROM word w INNER JOIN reviewCard rc ON rc.wordId = w.id"
+            if let bookId {
+                from += " INNER JOIN wordListEntry wle ON wle.wordId = w.id AND wle.listId = ?"
+                args.append(bookId)
+            }
+            let sql = """
+                SELECT
+                  w.id AS id,
+                  w.spelling AS spelling,
+                  w.phonetic AS phonetic,
+                  w.frequency AS frequency,
+                  json_extract(w.data, '$.definitions[0].chinese') AS firstDefZh,
+                  json_extract(w.data, '$.definitions[0].partOfSpeech') AS posLabel,
+                  CASE
+                    WHEN json_extract(w.data, '$.mnemonics') IS NOT NULL
+                      AND json_array_length(json_extract(w.data, '$.mnemonics')) > 0
+                    THEN 1 ELSE 0
+                  END AS hasMnemonic,
+                  rc.state AS cardState,
+                  rc.dueDate AS dueDate
+                \(from)
+                WHERE rc.state != 0 AND rc.dueDate <= ?
+                ORDER BY rc.dueDate ASC
+                LIMIT ?
+                """
+            args.append(now)
+            args.append(limit)
+            let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(args))
+            return rows.map(Self.rowToSummary)
+        }
+    }
+
+    /// New cards (state = 0), in book sortOrder if a book is given.
+    /// Used by Today preview and Plan new-words queue.
+    func fetchNewWordSummaries(inBook bookId: String? = nil, limit: Int = 50) throws -> [WordSummary] {
+        try dbQueue.read { db in
+            var args: [DatabaseValueConvertible] = []
+            let from: String
+            let order: String
+            if let bookId {
+                from = """
+                    FROM word w
+                    INNER JOIN reviewCard rc ON rc.wordId = w.id
+                    INNER JOIN wordListEntry wle ON wle.wordId = w.id AND wle.listId = ?
+                    """
+                args.append(bookId)
+                order = "ORDER BY wle.sortOrder ASC"
+            } else {
+                from = "FROM word w INNER JOIN reviewCard rc ON rc.wordId = w.id"
+                order = "ORDER BY w.frequency, w.spelling COLLATE NOCASE"
+            }
+            let sql = """
+                SELECT
+                  w.id AS id,
+                  w.spelling AS spelling,
+                  w.phonetic AS phonetic,
+                  w.frequency AS frequency,
+                  json_extract(w.data, '$.definitions[0].chinese') AS firstDefZh,
+                  json_extract(w.data, '$.definitions[0].partOfSpeech') AS posLabel,
+                  CASE
+                    WHEN json_extract(w.data, '$.mnemonics') IS NOT NULL
+                      AND json_array_length(json_extract(w.data, '$.mnemonics')) > 0
+                    THEN 1 ELSE 0
+                  END AS hasMnemonic,
+                  rc.state AS cardState
+                \(from)
+                WHERE rc.state = 0
+                \(order)
+                LIMIT ?
+                """
+            args.append(limit)
+            let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(args))
+            return rows.map(Self.rowToSummary)
+        }
+    }
+
+    /// Count of due cards grouped by day (next N days), for the Plan workload chart.
+    /// Returns one entry per day in the range with explicit zeros (calendar gap-filled
+    /// in the view layer when easier — we just give the raw counts here).
+    func fetchDueCountsByDay(daysAhead: Int = 7, inBook bookId: String? = nil, now: Date = Date()) throws -> [(date: Date, count: Int)] {
+        try dbQueue.read { db in
+            // SQLite stores ISO-8601 from GRDB; group by date(dueDate, 'localtime') gives YYYY-MM-DD
+            var args: [DatabaseValueConvertible] = []
+            var join = ""
+            if let bookId {
+                join = "INNER JOIN wordListEntry wle ON wle.wordId = rc.wordId AND wle.listId = ?"
+                args.append(bookId)
+            }
+            let cal = Calendar.current
+            let startOfToday = cal.startOfDay(for: now)
+            guard let endDate = cal.date(byAdding: .day, value: daysAhead, to: startOfToday) else {
+                return []
+            }
+            args.append(startOfToday)
+            args.append(endDate)
+            let sql = """
+                SELECT date(rc.dueDate, 'localtime') AS day, COUNT(*) AS cnt
+                FROM reviewCard rc
+                \(join)
+                WHERE rc.state != 0 AND rc.dueDate >= ? AND rc.dueDate < ?
+                GROUP BY day
+                ORDER BY day
+                """
+            let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(args))
+
+            // Map sparse SQL results into a dense 7-day array
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            formatter.timeZone = .current
+            var counts: [String: Int] = [:]
+            for row in rows {
+                if let day: String = row["day"], let cnt: Int = row["cnt"] {
+                    counts[day] = cnt
+                }
+            }
+            var result: [(Date, Int)] = []
+            for offset in 0..<daysAhead {
+                guard let day = cal.date(byAdding: .day, value: offset, to: startOfToday) else { continue }
+                let key = formatter.string(from: day)
+                result.append((day, counts[key] ?? 0))
+            }
+            return result
+        }
+    }
+
+    /// Group due-now cards into time buckets for the Plan due-backlog section.
+    /// "Today" = due before tomorrow; "Tomorrow"; "ThisWeek" = days 2..6; "Later" = day 7+
+    /// (only past-due and within-7-days are returned to keep the section bounded).
+    enum DueBucket: String, CaseIterable {
+        case overdue        // before today
+        case today          // due before tomorrow
+        case tomorrow
+        case thisWeek       // remaining of this week (days 2..6)
+        case later          // day 7+ (capped to 30 for sanity)
+
+        var label: String {
+            switch self {
+            case .overdue: "Overdue"
+            case .today: "Today"
+            case .tomorrow: "Tomorrow"
+            case .thisWeek: "This week"
+            case .later: "Later"
+            }
+        }
+    }
+
+    func fetchDueBacklog(inBook bookId: String? = nil, now: Date = Date(), perBucketLimit: Int = 100) throws -> [DueBucket: [WordSummary]] {
+        let cal = Calendar.current
+        let startOfToday = cal.startOfDay(for: now)
+        guard
+            let startOfTomorrow = cal.date(byAdding: .day, value: 1, to: startOfToday),
+            let startOfDay2 = cal.date(byAdding: .day, value: 2, to: startOfToday),
+            let startOfDay7 = cal.date(byAdding: .day, value: 7, to: startOfToday),
+            let startOfDay30 = cal.date(byAdding: .day, value: 30, to: startOfToday)
+        else {
+            return [:]
+        }
+
+        return try dbQueue.read { db in
+            var result: [DueBucket: [WordSummary]] = [:]
+            let buckets: [(DueBucket, Date, Date)] = [
+                (.overdue, .distantPast, startOfToday),
+                (.today, startOfToday, startOfTomorrow),
+                (.tomorrow, startOfTomorrow, startOfDay2),
+                (.thisWeek, startOfDay2, startOfDay7),
+                (.later, startOfDay7, startOfDay30),
+            ]
+            for (bucket, start, end) in buckets {
+                var args: [DatabaseValueConvertible] = []
+                var from = "FROM word w INNER JOIN reviewCard rc ON rc.wordId = w.id"
+                if let bookId {
+                    from += " INNER JOIN wordListEntry wle ON wle.wordId = w.id AND wle.listId = ?"
+                    args.append(bookId)
+                }
+                let sql = """
+                    SELECT
+                      w.id AS id,
+                      w.spelling AS spelling,
+                      w.phonetic AS phonetic,
+                      w.frequency AS frequency,
+                      json_extract(w.data, '$.definitions[0].chinese') AS firstDefZh,
+                      json_extract(w.data, '$.definitions[0].partOfSpeech') AS posLabel,
+                      CASE
+                        WHEN json_extract(w.data, '$.mnemonics') IS NOT NULL
+                          AND json_array_length(json_extract(w.data, '$.mnemonics')) > 0
+                        THEN 1 ELSE 0
+                      END AS hasMnemonic,
+                      rc.state AS cardState
+                    \(from)
+                    WHERE rc.state != 0 AND rc.dueDate >= ? AND rc.dueDate < ?
+                    ORDER BY rc.dueDate ASC
+                    LIMIT ?
+                    """
+                args.append(start)
+                args.append(end)
+                args.append(perBucketLimit)
+                let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(args))
+                let summaries = rows.map(Self.rowToSummary)
+                if !summaries.isEmpty {
+                    result[bucket] = summaries
+                }
+            }
+            return result
+        }
+    }
+
+    /// Count due cards in each bucket (for showing totals in the UI without loading all words).
+    func fetchDueBacklogCounts(inBook bookId: String? = nil, now: Date = Date()) throws -> [DueBucket: Int] {
+        let cal = Calendar.current
+        let startOfToday = cal.startOfDay(for: now)
+        guard
+            let startOfTomorrow = cal.date(byAdding: .day, value: 1, to: startOfToday),
+            let startOfDay2 = cal.date(byAdding: .day, value: 2, to: startOfToday),
+            let startOfDay7 = cal.date(byAdding: .day, value: 7, to: startOfToday),
+            let startOfDay30 = cal.date(byAdding: .day, value: 30, to: startOfToday)
+        else {
+            return [:]
+        }
+
+        return try dbQueue.read { db in
+            var counts: [DueBucket: Int] = [:]
+            let buckets: [(DueBucket, Date, Date)] = [
+                (.overdue, .distantPast, startOfToday),
+                (.today, startOfToday, startOfTomorrow),
+                (.tomorrow, startOfTomorrow, startOfDay2),
+                (.thisWeek, startOfDay2, startOfDay7),
+                (.later, startOfDay7, startOfDay30),
+            ]
+            for (bucket, start, end) in buckets {
+                var args: [DatabaseValueConvertible] = []
+                var join = ""
+                if let bookId {
+                    join = "INNER JOIN wordListEntry wle ON wle.wordId = rc.wordId AND wle.listId = ?"
+                    args.append(bookId)
+                }
+                args.append(start)
+                args.append(end)
+                let sql = """
+                    SELECT COUNT(*) FROM reviewCard rc
+                    \(join)
+                    WHERE rc.state != 0 AND rc.dueDate >= ? AND rc.dueDate < ?
+                    """
+                let cnt = try Int.fetchOne(db, sql: sql, arguments: StatementArguments(args)) ?? 0
+                if cnt > 0 { counts[bucket] = cnt }
+            }
+            return counts
+        }
+    }
+
+    /// Shared row → WordSummary mapping helper.
+    /// `dueDate` is optional in the SELECT — callers that don't need it can omit
+    /// the column and we'll just leave it nil.
+    private static func rowToSummary(_ row: Row) -> WordSummary {
+        let frequencyRaw = (row["frequency"] as? Int) ?? FrequencyTier.common.rawValue
+        let frequency = FrequencyTier(rawValue: frequencyRaw) ?? .common
+        let stateRaw = row["cardState"] as? Int
+        let cardState = stateRaw.flatMap { CardState(rawValue: $0) }
+        let dueDate: Date? = row["dueDate"]
+        return WordSummary(
+            id: row["id"],
+            spelling: row["spelling"],
+            phonetic: row["phonetic"],
+            frequency: frequency,
+            firstDefZh: row["firstDefZh"],
+            posLabel: row["posLabel"],
+            hasMnemonic: (row["hasMnemonic"] as? Int) == 1,
+            cardState: cardState,
+            dueDate: dueDate
+        )
     }
 
     func fetchWord(bySpelling spelling: String) throws -> Word? {
