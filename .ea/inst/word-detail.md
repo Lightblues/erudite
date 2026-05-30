@@ -265,3 +265,27 @@ SQLite word table
 │ 退出     │ Esc / 点外                        │ Esc / Cmd+[                         │
 └──────────┴───────────────────────────────────┴─────────────────────────────────────┘
 ```
+
+## fix bugs
+反馈问题:
+1. 目前 popover 页面无法通过 esc 退出, 在该状态时所有键盘操作都失效了!
+2. 可能关联的问题是: 目前在 typing 页面 space toggle 单词页之后, 再按 space 无法回去了! 也是所有快捷键失效!
+3. 关于 WordDetail
+  1. 在 Plan 页面进入全屏的 detailed 页面之后, 无法 esc 退出!
+  2. 在 popover 页 "Open in Library" 之后, 当前的 workflow 被打断了! 无法快捷退出; 当前的 typing section 也被停止了!
+console 日志如下供参考
+```sh
+# 重新设计
+1. 键盘 Esc 用 "隐藏 Button + .keyboardShortcut(.escape)" — 不依赖焦点, 100% 可靠.
+2. KeyCaptureView 不再静默丢事件 — 只是在 popover 期间不抢回焦点.
+3. "Open in Library" 改为 "Show details" + sheet — 不切 tab, Typing session 不被打断, Esc 退 sheet 即可.
+```
+```sh
+# 请你试一下这些场景:
+1. Typing 页 Space toggle 单词 — 应该能正常 toggle 回去
+2. Flashcard 弹 popover → Esc → 只关 popover, flashcard 不暂停
+3. Plan 进 detail → Esc → 退栈
+4. Typing 弹 popover → Cmd+O → 弹 sheet, Typing 不停止, Esc 关 sheet 后继续打字
+5. Library 分屏选词 → Esc 清空选中, 不退 tab
+```
+可以了! 更新 specs 文件; 创建 done issue 记录

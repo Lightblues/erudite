@@ -58,7 +58,13 @@
     - Stats: 统计
   - 组件
     - Popover: 单词速查
+      - 层级展示; `esc` 退回
     - WordDetail: 单词详情, 操作
+      - 支持 1. 当页 popover (`esc` 退出); 2. Library 中侧边查看. 两种模式
+- keyboard shortcuts
+  - 模型: 一个窗口只有一个 firstResponder — 这是 AppKit (NSView 层) 的规则
+  - 系统导航逻辑: `List(selection:)` behavior, 使用 `T/F/L/S` 快速切换到 Today/Flashcard
+  - 右侧 chat sidebar 焦点模型: 通过 `cmd+.` toggle chat 页面; 通过 `esc` 回到主视觉区域
 - features
   - FSRS: 核心记忆逻辑, @Erudite/Erudite/Engine/FSRS/FSRSEngine.swift
     - ⚠️  当前是 stub，还没实现完整 FSRS-5
