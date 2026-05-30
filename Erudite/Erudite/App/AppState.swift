@@ -32,6 +32,29 @@ final class AppState {
     /// (e.g. clicking on a selectable message should pull focus back to the input).
     var chatFocusNonce: Int = 0
 
+    /// Number of word popovers currently visible. Bumped on appear, decremented on
+    /// disappear by WordPopoverView/NotFoundPopoverView. KeyCaptureView checks this
+    /// before consuming a key so flashcard/typing shortcuts (Esc, Space, ...) don't
+    /// fire while a popover is on screen — the popover should own the keyboard.
+    /// Not @Observable: bumped from view onAppear/onDisappear, no UI depends on it.
+    @ObservationIgnored var popoverDepth: Int = 0
+
+    func popoverDidAppear() { popoverDepth += 1 }
+    func popoverDidDisappear() { popoverDepth = max(0, popoverDepth - 1) }
+
+    /// A pending request to surface a word inside the Library tab. Consumed by
+    /// LibraryView the next time it appears (or immediately if already on it).
+    /// Set by AppState.openWordInLibrary; cleared by LibraryView after handling.
+    var pendingLibraryWordId: String? = nil
+
+    /// Switch to the Library tab and request that `wordId` becomes the selected row.
+    /// Used by the popover's Cmd+O / "Open in Library" action so users can jump from
+    /// a popover view straight into the full WordDetail panel.
+    func openWordInLibrary(_ wordId: String) {
+        pendingLibraryWordId = wordId
+        selectedTab = .library
+    }
+
     /// The currently active KeyCaptureView NSView (registers itself when active).
     /// Not observed — purely an AppKit handle for direct focus control.
     @ObservationIgnored weak var activeKeyCapture: KeyNSView?

@@ -94,6 +94,15 @@ final class KeyNSView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        // While a word popover is on screen, let the popover own the keyboard.
+        // Without this guard, pressing Esc would simultaneously dismiss the popover
+        // *and* fire the host view's Esc handler (e.g. pause flashcard study).
+        if (AppState.shared?.popoverDepth ?? 0) > 0 {
+            // Don't consume — the popover's onKeyPress(.escape) etc. will pick it up.
+            // Don't call super either: that would beep on unrecognized keys.
+            return
+        }
+
         let keyEvent = KeyEvent(
             keyCode: event.keyCode,
             characters: event.charactersIgnoringModifiers ?? "",

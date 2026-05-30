@@ -2,12 +2,27 @@ import SwiftUI
 
 // MARK: - Word Popover View (Compact Dictionary Card)
 
+/// Where the popover was opened from. Affects which actions make sense:
+/// - `.library`: user is already in Library — "Open in Library" is redundant, hide it
+/// - `.elsewhere`: anywhere else (Today, Plan, Flashcard, Typing, definition click) —
+///   show "Open in Library" so the user can jump to the full WordDetail
+nonisolated enum WordPopoverHost: Hashable {
+    case elsewhere
+    case library
+}
+
 /// A compact word card shown in a popover when a user clicks an interactive word.
 /// Supports multi-layer lookup: English text inside the popover is also interactive.
+///
+/// While visible the popover bumps `AppState.popoverDepth` so the global
+/// KeyCaptureView yields keyboard control — without this, pressing Esc to dismiss
+/// the popover would also trigger flashcard/typing shortcuts.
 struct WordPopoverView: View {
     let word: Word
+    var host: WordPopoverHost = .elsewhere
     var onDismiss: (() -> Void)?
 
+    @Environment(AppState.self) private var appState
     @State private var showAllDefinitions = false
 
     var body: some View {
@@ -104,9 +119,24 @@ struct WordPopoverView: View {
 
             Divider()
 
-            // Footer: external links
+            // Footer: external links + (optional) Open in Library
             HStack(spacing: 12) {
+                if host == .elsewhere {
+                    Button {
+                        appState.openWordInLibrary(word.id)
+                        onDismiss?()
+                    } label: {
+                        Label("Open in Library", systemImage: "books.vertical")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.blue)
+                    .keyboardShortcut("o", modifiers: .command)
+                    .help("Open this word in the Library — ⌘O")
+                }
+
                 Spacer()
+
                 Button {
                     openMWWeb(word.spelling)
                 } label: {
@@ -128,6 +158,15 @@ struct WordPopoverView: View {
         }
         .padding(16)
         .frame(width: 360, alignment: .leading)
+        // Esc dismisses the popover. We focusable() so the .onKeyPress modifier
+        // actually receives keys; SwiftUI auto-focuses popover contents on appear.
+        .focusable()
+        .onKeyPress(.escape) {
+            onDismiss?()
+            return .handled
+        }
+        .onAppear { appState.popoverDidAppear() }
+        .onDisappear { appState.popoverDidDisappear() }
     }
 
     private func openMWWeb(_ spelling: String) {
@@ -144,6 +183,8 @@ struct WordPopoverView: View {
 struct NotFoundPopoverView: View {
     let spelling: String
     var onDismiss: (() -> Void)?
+
+    @Environment(AppState.self) private var appState
 
     var body: some View {
         VStack(spacing: 12) {
@@ -171,6 +212,13 @@ struct NotFoundPopoverView: View {
         }
         .padding(16)
         .frame(width: 280)
+        .focusable()
+        .onKeyPress(.escape) {
+            onDismiss?()
+            return .handled
+        }
+        .onAppear { appState.popoverDidAppear() }
+        .onDisappear { appState.popoverDidDisappear() }
     }
 }
 

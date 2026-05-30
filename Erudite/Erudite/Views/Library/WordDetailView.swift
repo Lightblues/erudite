@@ -18,7 +18,19 @@ import SwiftUI
 
 struct WordDetailView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
     let word: Word
+
+    /// Esc behavior depends on host:
+    /// - `.push` (default): pop the navigation stack via @Environment(\.dismiss)
+    /// - `.embedded`: do nothing — the host (e.g. Library split view) handles Esc
+    ///   to clear selection instead, and we don't want a double-action.
+    var escapeBehavior: EscapeBehavior = .push
+
+    enum EscapeBehavior {
+        case push
+        case embedded
+    }
 
     @State private var card: ReviewCard?
     @State private var recentLogs: [ReviewLog] = []
@@ -72,6 +84,17 @@ struct WordDetailView: View {
                 existing: mnemonic,
                 onSave: { _ in Task { await reloadUserMnemonics() } }
             )
+        }
+        // Esc dismisses when pushed onto a navigation stack. We focusable() so
+        // the modifier reliably receives keys even though the page is mostly
+        // scrollable text (no native focus targets).
+        .focusable(escapeBehavior == .push)
+        .onKeyPress(.escape) {
+            if escapeBehavior == .push {
+                dismiss()
+                return .handled
+            }
+            return .ignored
         }
     }
 

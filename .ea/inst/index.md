@@ -489,6 +489,7 @@ FSRS 算法逻辑是怎样的? 1/2/3/4 (again/hard/good/easy) 代表什么意思
   - [ ] feat: 任意单词查询
   - [ ] feat: 用户 mark 功能
   - [x] qwerty-learner 形式的 typing 练习
+  - [ ] web 页
 - basic
   - [x] 安装到本机 -- 直接 build release
   - [x] vocabulary?
@@ -522,6 +523,17 @@ FSRS 算法逻辑是怎样的? 1/2/3/4 (again/hard/good/easy) 代表什么意思
     - [Qwerty Learner](https://github.com/RealKai42/qwerty-learner) 22k [web](https://qwerty.kaiyi.cool/); 支持 vscode 插件, 也有在线版
       - 词库包括: GMAT, GRE, IELTS, SAT, TOEFL, CET-4, CET-6. e.g. [gre3000](https://github.com/RealKai42/qwerty-learner/blob/master/public/dicts/GRE3000_3_T.json) 但内容比较简单; 发音方案如何做的?
       - 同义词: [gre-equivalent](https://github.com/RealKai42/qwerty-learner/blob/master/public/dicts/GRE_equivalent.json) 
+- 整体 UI 设计
+  - 主体交互 (sidebar)
+    - Today: 首页
+    - Plan: 计划管理
+    - Flashcard: 背单词
+    - Typing: 打字记忆
+    - Library: 词库管理
+    - Stats: 统计
+  - 组件
+    - Popover: 单词速查
+    - WordDetail: 单词详情, 操作
 - features
   - FSRS: 核心记忆逻辑, @Erudite/Erudite/Engine/FSRS/FSRSEngine.swift
     - ⚠️  当前是 stub，还没实现完整 FSRS-5
