@@ -7,6 +7,12 @@ import SwiftUI
 //
 // Two density modes: .standard for full-width Library rows, .compact for
 // the narrower two-column Today preview where vertical space matters.
+//
+// The previous "tier badge" (C/M/A circle) was removed in 2026-05 — the
+// underlying frequency tier had no authoritative GRE provenance and the
+// distribution was so skewed (80% in advanced) that it added clutter
+// without information. WordSummary.frequency is still kept on the model
+// for backward compat / possible future re-introduction with a real signal.
 
 struct WordSummaryRow: View {
     let summary: WordSummary
@@ -21,8 +27,6 @@ struct WordSummaryRow: View {
 
     var body: some View {
         HStack(spacing: density == .compact ? 8 : 12) {
-            tierBadge
-
             VStack(alignment: .leading, spacing: density == .compact ? 1 : 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(summary.spelling)
@@ -77,20 +81,6 @@ struct WordSummaryRow: View {
     }
 
     // MARK: - Badges
-
-    private var tierBadge: some View {
-        let (color, label): (Color, String) = switch summary.frequency {
-        case .core: (.red, "C")
-        case .common: (.blue, "M")
-        case .advanced: (.gray, "A")
-        }
-        let size: CGFloat = density == .compact ? 16 : 20
-        return Text(label)
-            .font(density == .compact ? .caption2.bold() : .caption2.bold())
-            .foregroundStyle(.white)
-            .frame(width: size, height: size)
-            .background(color, in: Circle())
-    }
 
     @ViewBuilder
     private var stateBadge: some View {

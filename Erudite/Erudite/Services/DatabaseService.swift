@@ -114,6 +114,13 @@ nonisolated final class DatabaseService: Sendable {
             try db.create(index: "idx_log_time", on: "reviewLog", columns: ["timestamp"], ifNotExists: true)
             try db.create(index: "idx_log_card", on: "reviewLog", columns: ["cardId"], ifNotExists: true)
             try db.create(index: "idx_ai_cache", on: "aiCache", columns: ["wordId", "contentType"], ifNotExists: true)
+            // Library does ORDER BY w.spelling COLLATE NOCASE on every page —
+            // give it a covering index so we don't full-scan + sort 13K rows.
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_word_spelling ON word (spelling COLLATE NOCASE)")
+            // Book-order browsing relies on (listId, sortOrder); the existing
+            // PRIMARY KEY on (listId, wordId) doesn't help. Add it so paging
+            // through a Book in sortOrder is index-driven.
+            try db.create(index: "idx_wle_list_order", on: "wordListEntry", columns: ["listId", "sortOrder"], ifNotExists: true)
 
             // Typing practice log
             try db.create(table: "typingLog", ifNotExists: true) { t in
@@ -198,6 +205,16 @@ nonisolated final class DatabaseService: Sendable {
                 t.column("updatedAt", .datetime).notNull()
             }
             try db.create(index: "idx_user_content_word", on: "user_content", columns: ["wordId", "type"], ifNotExists: true)
+
+            // Generic key/value metadata.
+            // Used for tracking the bundled data version (so we can upgrade
+            // pre-existing words when words.json ships a newer enrichment).
+            // Other future uses: schema migration markers, last-seen-changelog,
+            // feature flags. Stays small (< 100 rows) so no need for indexes.
+            try db.create(table: "meta", ifNotExists: true) { t in
+                t.primaryKey("key", .text)
+                t.column("value", .text).notNull()
+            }
         }
     }
 
@@ -224,6 +241,70 @@ nonisolated final class DatabaseService: Sendable {
                 )
             }
         }
+    }
+
+    /// Bulk-upgrade word.data for words already in the DB.
+    ///
+    /// Used by WordLoader when the bundled words.json version moves forward
+    /// (e.g. v1.0 → v3.0 ai-enriched). For each input word:
+    /// - if it exists: UPDATE the row (preserving foreign key relationships)
+    /// - if it's new: INSERT a fresh row + create a ReviewCard for it
+    ///
+    /// CRITICAL: We must NOT use `INSERT OR REPLACE` here. SQLite implements
+    /// REPLACE as DELETE-then-INSERT when there's a primary-key conflict, and
+    /// reviewCard.wordId has `ON DELETE CASCADE` — so a naive REPLACE would
+    /// wipe out the user's entire FSRS progress. UPDATE on the same primary
+    /// key avoids triggering the DELETE and keeps reviewCard / reviewLog /
+    /// user_content untouched.
+    ///
+    /// Returns (`existingUpdated`, `newInserted`) so the caller can log a
+    /// useful summary.
+    func upsertWordData(_ words: [Word]) throws -> (existingUpdated: Int, newInserted: Int) {
+        let encoder = JSONEncoder()
+        var updated = 0
+        var inserted = 0
+        try dbQueue.write { db in
+            // Pull existing IDs once so we can pick UPDATE vs INSERT per row.
+            let existingIds = Set(try String.fetchAll(db, sql: "SELECT id FROM word"))
+            for word in words {
+                let jsonData = try encoder.encode(word)
+                if existingIds.contains(word.id) {
+                    try db.execute(
+                        sql: """
+                            UPDATE word
+                            SET spelling = ?, phonetic = ?, sentiment = ?, frequency = ?, data = ?
+                            WHERE id = ?
+                            """,
+                        arguments: [
+                            word.spelling,
+                            word.phonetic,
+                            word.sentiment.rawValue,
+                            word.frequency.rawValue,
+                            jsonData,
+                            word.id
+                        ]
+                    )
+                    updated += 1
+                } else {
+                    try db.execute(
+                        sql: """
+                            INSERT INTO word (id, spelling, phonetic, sentiment, frequency, data)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                        arguments: [
+                            word.id,
+                            word.spelling,
+                            word.phonetic,
+                            word.sentiment.rawValue,
+                            word.frequency.rawValue,
+                            jsonData
+                        ]
+                    )
+                    inserted += 1
+                }
+            }
+        }
+        return (updated, inserted)
     }
 
     func fetchAllWords() throws -> [Word] {
@@ -303,16 +384,15 @@ nonisolated final class DatabaseService: Sendable {
 
     func fetchWordSummaries(
         book: String? = nil,
-        tier: FrequencyTier? = nil,
         state: WordStateFilter = .all,
         search: String? = nil,
-        sort: WordSort = .frequency,
+        sort: WordSort = .bookOrder,
         limit: Int = 200,
         offset: Int = 0
     ) throws -> [WordSummary] {
         try dbQueue.read { db in
             let (sql, args) = Self.buildSummaryQuery(
-                book: book, tier: tier, state: state, search: search,
+                book: book, state: state, search: search,
                 sort: sort, limit: limit, offset: offset, countOnly: false
             )
             let rows = try Row.fetchAll(db, sql: sql, arguments: args)
@@ -322,14 +402,13 @@ nonisolated final class DatabaseService: Sendable {
 
     func fetchWordSummaryCount(
         book: String? = nil,
-        tier: FrequencyTier? = nil,
         state: WordStateFilter = .all,
         search: String? = nil
     ) throws -> Int {
         try dbQueue.read { db in
             let (sql, args) = Self.buildSummaryQuery(
-                book: book, tier: tier, state: state, search: search,
-                sort: .frequency, limit: 0, offset: 0, countOnly: true
+                book: book, state: state, search: search,
+                sort: .alphabetical, limit: 0, offset: 0, countOnly: true
             )
             return try Int.fetchOne(db, sql: sql, arguments: args) ?? 0
         }
@@ -344,7 +423,6 @@ nonisolated final class DatabaseService: Sendable {
 
     private static func buildSummaryQuery(
         book: String?,
-        tier: FrequencyTier?,
         state: WordStateFilter,
         search: String?,
         sort: WordSort,
@@ -355,6 +433,9 @@ nonisolated final class DatabaseService: Sendable {
         var args: [DatabaseValueConvertible] = []
         var clauses: [String] = []
 
+        // bookOrder needs wle.sortOrder. Always INNER JOIN wordListEntry when a
+        // book is set so we can ORDER BY it; without a book selected, bookOrder
+        // silently falls back to alphabetical (no wle column to sort on).
         let select: String
         if countOnly {
             select = "SELECT COUNT(*)"
@@ -382,11 +463,6 @@ nonisolated final class DatabaseService: Sendable {
         if let book {
             from += " INNER JOIN wordListEntry wle ON wle.wordId = w.id AND wle.listId = ?"
             args.append(book)
-        }
-
-        if let tier {
-            clauses.append("w.frequency = ?")
-            args.append(tier.rawValue)
         }
 
         switch state {
@@ -420,8 +496,13 @@ nonisolated final class DatabaseService: Sendable {
             orderBy = ""
         } else {
             switch sort {
-            case .frequency:
-                orderBy = "ORDER BY w.frequency, w.spelling COLLATE NOCASE"
+            case .bookOrder:
+                if book != nil {
+                    orderBy = "ORDER BY wle.sortOrder, w.spelling COLLATE NOCASE"
+                } else {
+                    // No book picked → "Book Order" is meaningless; fall back to A→Z.
+                    orderBy = "ORDER BY w.spelling COLLATE NOCASE"
+                }
             case .alphabetical:
                 orderBy = "ORDER BY w.spelling COLLATE NOCASE"
             case .dueDate:
@@ -706,12 +787,21 @@ nonisolated final class DatabaseService: Sendable {
     /// Shared row → WordSummary mapping helper.
     /// `dueDate` is optional in the SELECT — callers that don't need it can omit
     /// the column and we'll just leave it nil.
+    ///
+    /// IMPORTANT: GRDB returns SQLite integers as `Int64`. Using `row["x"] as? Int`
+    /// goes through `DatabaseValue` and silently fails (returns nil) for many
+    /// values. Use the typed annotation form `let x: Int? = row["x"]` instead —
+    /// GRDB's typed subscript handles the Int64 → Int conversion correctly.
+    /// This was the cause of the "all rows show as New" bug in Library when
+    /// filtering by Review state: SQL was returning state=2 but Swift was
+    /// reading nil → falling back to .new on the badge.
     private static func rowToSummary(_ row: Row) -> WordSummary {
-        let frequencyRaw = (row["frequency"] as? Int) ?? FrequencyTier.common.rawValue
-        let frequency = FrequencyTier(rawValue: frequencyRaw) ?? .common
-        let stateRaw = row["cardState"] as? Int
+        let frequencyRaw: Int? = row["frequency"]
+        let frequency = FrequencyTier(rawValue: frequencyRaw ?? FrequencyTier.common.rawValue) ?? .common
+        let stateRaw: Int? = row["cardState"]
         let cardState = stateRaw.flatMap { CardState(rawValue: $0) }
         let dueDate: Date? = row["dueDate"]
+        let hasMnemonicRaw: Int? = row["hasMnemonic"]
         return WordSummary(
             id: row["id"],
             spelling: row["spelling"],
@@ -719,7 +809,7 @@ nonisolated final class DatabaseService: Sendable {
             frequency: frequency,
             firstDefZh: row["firstDefZh"],
             posLabel: row["posLabel"],
-            hasMnemonic: (row["hasMnemonic"] as? Int) == 1,
+            hasMnemonic: (hasMnemonicRaw ?? 0) == 1,
             cardState: cardState,
             dueDate: dueDate
         )
@@ -1083,6 +1173,33 @@ nonisolated final class DatabaseService: Sendable {
                     VALUES (?, ?, ?, ?, ?, ?)
                     """,
                 arguments: [wordId, bookId, mistakes, duration, mode, Date()]
+            )
+        }
+    }
+
+    // MARK: - Meta (key-value)
+    //
+    // Tiny key/value store. Currently used for `wordsVersion` (the version
+    // string of the bundled words.json that last seeded the DB). When the
+    // bundled version is newer than what's stored, WordLoader runs an upgrade
+    // pass that overwrites word.data — reviewCard / reviewLog / user_content
+    // are untouched, so FSRS progress and user mnemonics survive.
+
+    func metaValue(forKey key: String) throws -> String? {
+        try dbQueue.read { db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT value FROM meta WHERE key = ?",
+                arguments: [key]
+            )
+        }
+    }
+
+    func setMetaValue(_ value: String, forKey key: String) throws {
+        try dbQueue.write { db in
+            try db.execute(
+                sql: "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+                arguments: [key, value]
             )
         }
     }

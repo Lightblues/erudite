@@ -115,10 +115,6 @@ struct WordDetailView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-
-            HStack(spacing: 8) {
-                tierBadge(word.frequency)
-            }
         }
     }
 
@@ -481,24 +477,6 @@ struct WordDetailView: View {
     }
 
     // MARK: - Helpers
-
-    private func tierBadge(_ tier: FrequencyTier) -> some View {
-        Text(tier.label)
-            .font(.caption)
-            .fontWeight(.medium)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(tierColor(tier).opacity(0.15), in: Capsule())
-            .foregroundStyle(tierColor(tier))
-    }
-
-    private func tierColor(_ tier: FrequencyTier) -> Color {
-        switch tier {
-        case .core: .red
-        case .common: .blue
-        case .advanced: .gray
-        }
-    }
 
     private func morphemeColor(_ type: MorphemeType) -> Color {
         switch type {

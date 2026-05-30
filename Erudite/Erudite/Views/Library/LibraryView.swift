@@ -21,10 +21,16 @@ struct LibraryView: View {
     // Filters
     @State private var searchText: String = ""
     @State private var debouncedSearch: String = ""
-    @State private var selectedTier: FrequencyTier? = nil
+    // selectedBookId mirrors AppState.activeBookId on first appear and is
+    // pushed back to AppState whenever the user changes the picker, so Today
+    // / Plan / Library all show the same book.
     @State private var selectedBookId: String? = nil
+    @State private var didInitBookSelection: Bool = false
     @State private var selectedState: WordStateFilter = .all
-    @State private var selectedSort: WordSort = .frequency
+    // Default sort: bookOrder (honors the book's curated sequence — e.g. GRE
+    // 3000's chapter order). When no book is selected, the SQL builder
+    // silently falls back to alphabetical.
+    @State private var selectedSort: WordSort = .bookOrder
 
     // Results
     @State private var summaries: [WordSummary] = []
@@ -60,14 +66,34 @@ struct LibraryView: View {
         .onChange(of: searchText) { _, newValue in
             scheduleSearch(newValue)
         }
-        .onChange(of: selectedTier) { _, _ in Task { await reload() } }
-        .onChange(of: selectedBookId) { _, _ in Task { await reload() } }
+        .onChange(of: selectedBookId) { _, newValue in
+            // Two-way sync: keep AppState in sync so Today / Plan see the same
+            // book. Skip the initial sync triggered by .task seeding.
+            if didInitBookSelection && newValue != appState.activeBookId {
+                appState.selectBook(newValue)
+            }
+            Task { await reload() }
+        }
         .onChange(of: selectedState) { _, _ in Task { await reload() } }
         .onChange(of: selectedSort) { _, _ in Task { await reload() } }
         .onChange(of: selectedWordId) { _, newId in
             Task { await loadFullWord(for: newId) }
         }
+        .onChange(of: appState.activeBookId) { _, newValue in
+            // Pull AppState changes (e.g. user changed book on Today) into our
+            // local state so the picker reflects it.
+            if newValue != selectedBookId {
+                selectedBookId = newValue
+            }
+        }
         .task {
+            // Seed the local picker from the currently active study book.
+            // didInitBookSelection guards against treating this as a user-driven
+            // change (which would push back to AppState and trigger reload twice).
+            if !didInitBookSelection {
+                selectedBookId = appState.activeBookId
+                didInitBookSelection = true
+            }
             await loadTotalCount()
             await reload()
         }
@@ -128,17 +154,8 @@ struct LibraryView: View {
                             Text(book.name).tag(String?.some(book.id))
                         }
                     }
-                    .frame(maxWidth: 200)
+                    .frame(maxWidth: 220)
                 }
-
-                Picker("Tier", selection: $selectedTier) {
-                    Text("All").tag(FrequencyTier?.none)
-                    Text("Core").tag(FrequencyTier?.some(.core))
-                    Text("Common").tag(FrequencyTier?.some(.common))
-                    Text("Advanced").tag(FrequencyTier?.some(.advanced))
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 280)
 
                 Picker("State", selection: $selectedState) {
                     ForEach(WordStateFilter.allCases, id: \.self) { state in
@@ -297,13 +314,11 @@ struct LibraryView: View {
         do {
             let count = try db.fetchWordSummaryCount(
                 book: selectedBookId,
-                tier: selectedTier,
                 state: selectedState,
                 search: search
             )
             let page = try db.fetchWordSummaries(
                 book: selectedBookId,
-                tier: selectedTier,
                 state: selectedState,
                 search: search,
                 sort: selectedSort,
@@ -333,7 +348,6 @@ struct LibraryView: View {
         do {
             let page = try db.fetchWordSummaries(
                 book: selectedBookId,
-                tier: selectedTier,
                 state: selectedState,
                 search: debouncedSearch.isEmpty ? nil : debouncedSearch,
                 sort: selectedSort,

@@ -376,10 +376,8 @@ struct StudyView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                // Tier badge + replay button
+                // Replay pronunciation button
                 HStack(spacing: 8) {
-                    tierBadge(word.frequency)
-                    Spacer().frame(width: 8)
                     Button {
                         viewModel.replayPronunciation()
                     } label: {
@@ -648,24 +646,6 @@ struct StudyView: View {
     }
 
     // MARK: - Helpers
-
-    private func tierBadge(_ tier: FrequencyTier) -> some View {
-        Text(tier.label)
-            .font(.caption2)
-            .fontWeight(.medium)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .background(tierColor(tier).opacity(0.15), in: Capsule())
-            .foregroundStyle(tierColor(tier))
-    }
-
-    private func tierColor(_ tier: FrequencyTier) -> Color {
-        switch tier {
-        case .core: .red
-        case .common: .blue
-        case .advanced: .gray
-        }
-    }
 
     private func cardStateColor(_ state: CardState) -> Color {
         switch state {
