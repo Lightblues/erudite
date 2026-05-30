@@ -21,31 +21,35 @@ struct PlanView: View {
     @State private var isLoading: Bool = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                title
-                roadmapSection
-                workloadSection
-                newQueueSection
-                backlogSection
+        // Wrap in NavigationStack so .navigationDestination(for:) resolves
+        // (NavigationSplitView's detail column doesn't supply its own stack).
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 28) {
+                    title
+                    roadmapSection
+                    workloadSection
+                    newQueueSection
+                    backlogSection
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(24)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationDestination(for: String.self) { wordId in
-            // Reuse Library's loader pattern by going through a small wrapper
-            // (kept inside this file to avoid exporting another type)
-            PlanWordDetailLoader(wordId: wordId)
-        }
-        .task {
-            await reload()
-        }
-        .onChange(of: appState.activeBookId) { _, _ in
-            Task { await reload() }
-        }
-        .onChange(of: appState.isDBReady) { _, ready in
-            if ready { Task { await reload() } }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .navigationDestination(for: String.self) { wordId in
+                // Reuse Library's loader pattern by going through a small wrapper
+                // (kept inside this file to avoid exporting another type)
+                PlanWordDetailLoader(wordId: wordId)
+            }
+            .task {
+                await reload()
+            }
+            .onChange(of: appState.activeBookId) { _, _ in
+                Task { await reload() }
+            }
+            .onChange(of: appState.isDBReady) { _, ready in
+                if ready { Task { await reload() } }
+            }
         }
     }
 

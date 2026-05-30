@@ -32,23 +32,29 @@ struct LibraryView: View {
     @State private var searchDebounceTask: Task<Void, Never>?
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            content
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .searchable(text: $searchText, prompt: "Search spelling or definition...")
-        .onChange(of: searchText) { _, newValue in
-            scheduleSearch(newValue)
-        }
-        .onChange(of: selectedTier) { _, _ in Task { await reload() } }
-        .onChange(of: selectedBookId) { _, _ in Task { await reload() } }
-        .onChange(of: selectedState) { _, _ in Task { await reload() } }
-        .onChange(of: selectedSort) { _, _ in Task { await reload() } }
-        .task {
-            await loadTotalCount()
-            await reload()
+        // NavigationStack hosts the path that .navigationDestination(for:) below
+        // resolves. Without this, NavigationLink(value:) on rows is a no-op
+        // because the surrounding NavigationSplitView's detail column doesn't
+        // own a stack of its own.
+        NavigationStack {
+            VStack(spacing: 0) {
+                header
+                Divider()
+                content
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .searchable(text: $searchText, prompt: "Search spelling or definition...")
+            .onChange(of: searchText) { _, newValue in
+                scheduleSearch(newValue)
+            }
+            .onChange(of: selectedTier) { _, _ in Task { await reload() } }
+            .onChange(of: selectedBookId) { _, _ in Task { await reload() } }
+            .onChange(of: selectedState) { _, _ in Task { await reload() } }
+            .onChange(of: selectedSort) { _, _ in Task { await reload() } }
+            .task {
+                await loadTotalCount()
+                await reload()
+            }
         }
     }
 
