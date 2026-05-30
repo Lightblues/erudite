@@ -32,6 +32,41 @@ final class AppState {
     /// (e.g. clicking on a selectable message should pull focus back to the input).
     var chatFocusNonce: Int = 0
 
+    /// Number of word popovers currently visible. Bumped on appear, decremented on
+    /// disappear by WordPopoverView/NotFoundPopoverView. KeyCaptureView checks this
+    /// before consuming a key so flashcard/typing shortcuts (Esc, Space, ...) don't
+    /// fire while a popover is on screen — the popover should own the keyboard.
+    /// Not @Observable: bumped from view onAppear/onDisappear, no UI depends on it.
+    @ObservationIgnored var popoverDepth: Int = 0
+
+    func popoverDidAppear() { popoverDepth += 1 }
+    func popoverDidDisappear() { popoverDepth = max(0, popoverDepth - 1) }
+
+    /// A pending request to surface a word inside the Library tab. Consumed by
+    /// LibraryView the next time it appears (or immediately if already on it).
+    /// Set by AppState.openWordInLibrary; cleared by LibraryView after handling.
+    var pendingLibraryWordId: String? = nil
+
+    /// When non-nil, ContentView shows a modal sheet with the full WordDetailView
+    /// for this word. Used by the popover's Cmd+O / "Show details" action so the
+    /// user can deep-dive without leaving their current tab (Typing / Flashcard
+    /// sessions stay alive).
+    var detailSheetWordId: String? = nil
+
+    /// Open the full WordDetailView in a modal sheet on top of the current tab.
+    /// Preferred over openWordInLibrary because it doesn't disrupt study sessions.
+    func showWordDetailSheet(_ wordId: String) {
+        detailSheetWordId = wordId
+    }
+
+    /// Switch to the Library tab and request that `wordId` becomes the selected row.
+    /// Used by the popover's Cmd+O / "Open in Library" action so users can jump from
+    /// a popover view straight into the full WordDetail panel.
+    func openWordInLibrary(_ wordId: String) {
+        pendingLibraryWordId = wordId
+        selectedTab = .library
+    }
+
     /// The currently active KeyCaptureView NSView (registers itself when active).
     /// Not observed — purely an AppKit handle for direct focus control.
     @ObservationIgnored weak var activeKeyCapture: KeyNSView?
@@ -185,6 +220,7 @@ final class AppState {
 
 enum SidebarTab: String, CaseIterable, Identifiable {
     case today = "Today"
+    case plan = "Plan"
     case flashcard = "Flashcard"
     case typing = "Typing"
     case library = "Library"
@@ -195,6 +231,7 @@ enum SidebarTab: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .today: "house"
+        case .plan: "calendar.day.timeline.left"
         case .flashcard: "book"
         case .typing: "keyboard"
         case .library: "books.vertical"

@@ -183,6 +183,21 @@ nonisolated final class DatabaseService: Sendable {
                 t.column("sessionId", .text)
             }
             try db.create(index: "idx_ai_traces_time", on: "ai_traces", columns: ["timestamp"], ifNotExists: true)
+
+            // User-generated content (mnemonics, notes, ...).
+            // Single table keyed by `type` so we can add new content categories
+            // without schema migration. `content` is plain text; we don't try
+            // to be clever about formats.
+            try db.create(table: "user_content", ifNotExists: true) { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("wordId", .text).notNull()
+                    .references("word", onDelete: .cascade)
+                t.column("type", .text).notNull()       // "mnemonic" | "note" | future
+                t.column("content", .text).notNull()
+                t.column("createdAt", .datetime).notNull()
+                t.column("updatedAt", .datetime).notNull()
+            }
+            try db.create(index: "idx_user_content_word", on: "user_content", columns: ["wordId", "type"], ifNotExists: true)
         }
     }
 
@@ -272,6 +287,442 @@ nonisolated final class DatabaseService: Sendable {
             guard let data = row["data"] as? Data else { return nil }
             return try? decoder.decode(Word.self, from: data)
         }
+    }
+
+    // MARK: - WordSummary (lightweight projection for list views)
+    //
+    // Query strategy: project only the fields list rows need (id, spelling,
+    // phonetic, freq, first def, pos, hasMnemonic, cardState). All filters
+    // (book/tier/state/search) and sorts run in SQL — never load + filter in
+    // Swift over 13K Word JSON blobs.
+    //
+    // Search uses LIKE on spelling + first Chinese definition (case-insensitive).
+    // Card state comes from a LEFT JOIN on reviewCard (NULL = no card row, treat as new).
+    // Mnemonic detection uses json_array_length on the bundled mnemonics field;
+    // user-added mnemonics (future user_content table) will need an OR clause here.
+
+    func fetchWordSummaries(
+        book: String? = nil,
+        tier: FrequencyTier? = nil,
+        state: WordStateFilter = .all,
+        search: String? = nil,
+        sort: WordSort = .frequency,
+        limit: Int = 200,
+        offset: Int = 0
+    ) throws -> [WordSummary] {
+        try dbQueue.read { db in
+            let (sql, args) = Self.buildSummaryQuery(
+                book: book, tier: tier, state: state, search: search,
+                sort: sort, limit: limit, offset: offset, countOnly: false
+            )
+            let rows = try Row.fetchAll(db, sql: sql, arguments: args)
+            return rows.map(Self.rowToSummary)
+        }
+    }
+
+    func fetchWordSummaryCount(
+        book: String? = nil,
+        tier: FrequencyTier? = nil,
+        state: WordStateFilter = .all,
+        search: String? = nil
+    ) throws -> Int {
+        try dbQueue.read { db in
+            let (sql, args) = Self.buildSummaryQuery(
+                book: book, tier: tier, state: state, search: search,
+                sort: .frequency, limit: 0, offset: 0, countOnly: true
+            )
+            return try Int.fetchOne(db, sql: sql, arguments: args) ?? 0
+        }
+    }
+
+    /// Total word count in the bundled DB (book == nil → all words).
+    func fetchTotalWordCount() throws -> Int {
+        try dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM word") ?? 0
+        }
+    }
+
+    private static func buildSummaryQuery(
+        book: String?,
+        tier: FrequencyTier?,
+        state: WordStateFilter,
+        search: String?,
+        sort: WordSort,
+        limit: Int,
+        offset: Int,
+        countOnly: Bool
+    ) -> (String, StatementArguments) {
+        var args: [DatabaseValueConvertible] = []
+        var clauses: [String] = []
+
+        let select: String
+        if countOnly {
+            select = "SELECT COUNT(*)"
+        } else {
+            // json_extract works on the BLOB column because GRDB stores UTF-8 JSON
+            // bytes; SQLite's JSON1 parser accepts the byte sequence directly.
+            select = """
+                SELECT
+                  w.id AS id,
+                  w.spelling AS spelling,
+                  w.phonetic AS phonetic,
+                  w.frequency AS frequency,
+                  json_extract(w.data, '$.definitions[0].chinese') AS firstDefZh,
+                  json_extract(w.data, '$.definitions[0].partOfSpeech') AS posLabel,
+                  CASE
+                    WHEN json_extract(w.data, '$.mnemonics') IS NOT NULL
+                      AND json_array_length(json_extract(w.data, '$.mnemonics')) > 0
+                    THEN 1 ELSE 0
+                  END AS hasMnemonic,
+                  rc.state AS cardState
+                """
+        }
+
+        var from = "FROM word w LEFT JOIN reviewCard rc ON rc.wordId = w.id"
+        if let book {
+            from += " INNER JOIN wordListEntry wle ON wle.wordId = w.id AND wle.listId = ?"
+            args.append(book)
+        }
+
+        if let tier {
+            clauses.append("w.frequency = ?")
+            args.append(tier.rawValue)
+        }
+
+        switch state {
+        case .all:
+            break
+        case .new:
+            // No card row OR card.state == 0 (new)
+            clauses.append("(rc.state IS NULL OR rc.state = 0)")
+        case .learning:
+            clauses.append("rc.state IN (1, 3)")
+        case .review:
+            clauses.append("rc.state = 2")
+        case .mature:
+            // Review state with stability over 21 days — rough "mature" bucket
+            clauses.append("rc.state = 2 AND rc.stability >= 21")
+        }
+
+        if let search, !search.isEmpty {
+            let pattern = "%\(search)%"
+            clauses.append("""
+                (w.spelling LIKE ? OR json_extract(w.data, '$.definitions[0].chinese') LIKE ?)
+                """)
+            args.append(pattern)
+            args.append(pattern)
+        }
+
+        let whereClause = clauses.isEmpty ? "" : "WHERE " + clauses.joined(separator: " AND ")
+
+        let orderBy: String
+        if countOnly {
+            orderBy = ""
+        } else {
+            switch sort {
+            case .frequency:
+                orderBy = "ORDER BY w.frequency, w.spelling COLLATE NOCASE"
+            case .alphabetical:
+                orderBy = "ORDER BY w.spelling COLLATE NOCASE"
+            case .dueDate:
+                // NULL dueDate (new cards / no card) sorts last; among non-null, soonest first
+                orderBy = "ORDER BY (rc.dueDate IS NULL), rc.dueDate ASC, w.spelling COLLATE NOCASE"
+            case .lapses:
+                orderBy = "ORDER BY (rc.lapses IS NULL), rc.lapses DESC, w.spelling COLLATE NOCASE"
+            }
+        }
+
+        let limitClause: String
+        if countOnly {
+            limitClause = ""
+        } else {
+            limitClause = "LIMIT ? OFFSET ?"
+            args.append(limit)
+            args.append(offset)
+        }
+
+        let sql = [select, from, whereClause, orderBy, limitClause]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return (sql, StatementArguments(args))
+    }
+
+    // MARK: - WordSummary convenience queries (Today / Plan)
+
+    /// Words that are due for review now, projected as summaries (sorted by dueDate).
+    /// Used by Today preview and Plan due-backlog. Excludes new cards.
+    func fetchDueSummaries(now: Date = Date(), inBook bookId: String? = nil, limit: Int = 50) throws -> [WordSummary] {
+        try dbQueue.read { db in
+            var args: [DatabaseValueConvertible] = []
+            var from = "FROM word w INNER JOIN reviewCard rc ON rc.wordId = w.id"
+            if let bookId {
+                from += " INNER JOIN wordListEntry wle ON wle.wordId = w.id AND wle.listId = ?"
+                args.append(bookId)
+            }
+            let sql = """
+                SELECT
+                  w.id AS id,
+                  w.spelling AS spelling,
+                  w.phonetic AS phonetic,
+                  w.frequency AS frequency,
+                  json_extract(w.data, '$.definitions[0].chinese') AS firstDefZh,
+                  json_extract(w.data, '$.definitions[0].partOfSpeech') AS posLabel,
+                  CASE
+                    WHEN json_extract(w.data, '$.mnemonics') IS NOT NULL
+                      AND json_array_length(json_extract(w.data, '$.mnemonics')) > 0
+                    THEN 1 ELSE 0
+                  END AS hasMnemonic,
+                  rc.state AS cardState,
+                  rc.dueDate AS dueDate
+                \(from)
+                WHERE rc.state != 0 AND rc.dueDate <= ?
+                ORDER BY rc.dueDate ASC
+                LIMIT ?
+                """
+            args.append(now)
+            args.append(limit)
+            let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(args))
+            return rows.map(Self.rowToSummary)
+        }
+    }
+
+    /// New cards (state = 0), in book sortOrder if a book is given.
+    /// Used by Today preview and Plan new-words queue.
+    func fetchNewWordSummaries(inBook bookId: String? = nil, limit: Int = 50) throws -> [WordSummary] {
+        try dbQueue.read { db in
+            var args: [DatabaseValueConvertible] = []
+            let from: String
+            let order: String
+            if let bookId {
+                from = """
+                    FROM word w
+                    INNER JOIN reviewCard rc ON rc.wordId = w.id
+                    INNER JOIN wordListEntry wle ON wle.wordId = w.id AND wle.listId = ?
+                    """
+                args.append(bookId)
+                order = "ORDER BY wle.sortOrder ASC"
+            } else {
+                from = "FROM word w INNER JOIN reviewCard rc ON rc.wordId = w.id"
+                order = "ORDER BY w.frequency, w.spelling COLLATE NOCASE"
+            }
+            let sql = """
+                SELECT
+                  w.id AS id,
+                  w.spelling AS spelling,
+                  w.phonetic AS phonetic,
+                  w.frequency AS frequency,
+                  json_extract(w.data, '$.definitions[0].chinese') AS firstDefZh,
+                  json_extract(w.data, '$.definitions[0].partOfSpeech') AS posLabel,
+                  CASE
+                    WHEN json_extract(w.data, '$.mnemonics') IS NOT NULL
+                      AND json_array_length(json_extract(w.data, '$.mnemonics')) > 0
+                    THEN 1 ELSE 0
+                  END AS hasMnemonic,
+                  rc.state AS cardState
+                \(from)
+                WHERE rc.state = 0
+                \(order)
+                LIMIT ?
+                """
+            args.append(limit)
+            let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(args))
+            return rows.map(Self.rowToSummary)
+        }
+    }
+
+    /// Count of due cards grouped by day (next N days), for the Plan workload chart.
+    /// Returns one entry per day in the range with explicit zeros (calendar gap-filled
+    /// in the view layer when easier — we just give the raw counts here).
+    func fetchDueCountsByDay(daysAhead: Int = 7, inBook bookId: String? = nil, now: Date = Date()) throws -> [(date: Date, count: Int)] {
+        try dbQueue.read { db in
+            // SQLite stores ISO-8601 from GRDB; group by date(dueDate, 'localtime') gives YYYY-MM-DD
+            var args: [DatabaseValueConvertible] = []
+            var join = ""
+            if let bookId {
+                join = "INNER JOIN wordListEntry wle ON wle.wordId = rc.wordId AND wle.listId = ?"
+                args.append(bookId)
+            }
+            let cal = Calendar.current
+            let startOfToday = cal.startOfDay(for: now)
+            guard let endDate = cal.date(byAdding: .day, value: daysAhead, to: startOfToday) else {
+                return []
+            }
+            args.append(startOfToday)
+            args.append(endDate)
+            let sql = """
+                SELECT date(rc.dueDate, 'localtime') AS day, COUNT(*) AS cnt
+                FROM reviewCard rc
+                \(join)
+                WHERE rc.state != 0 AND rc.dueDate >= ? AND rc.dueDate < ?
+                GROUP BY day
+                ORDER BY day
+                """
+            let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(args))
+
+            // Map sparse SQL results into a dense 7-day array
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            formatter.timeZone = .current
+            var counts: [String: Int] = [:]
+            for row in rows {
+                if let day: String = row["day"], let cnt: Int = row["cnt"] {
+                    counts[day] = cnt
+                }
+            }
+            var result: [(Date, Int)] = []
+            for offset in 0..<daysAhead {
+                guard let day = cal.date(byAdding: .day, value: offset, to: startOfToday) else { continue }
+                let key = formatter.string(from: day)
+                result.append((day, counts[key] ?? 0))
+            }
+            return result
+        }
+    }
+
+    /// Group due-now cards into time buckets for the Plan due-backlog section.
+    /// "Today" = due before tomorrow; "Tomorrow"; "ThisWeek" = days 2..6; "Later" = day 7+
+    /// (only past-due and within-7-days are returned to keep the section bounded).
+    enum DueBucket: String, CaseIterable {
+        case overdue        // before today
+        case today          // due before tomorrow
+        case tomorrow
+        case thisWeek       // remaining of this week (days 2..6)
+        case later          // day 7+ (capped to 30 for sanity)
+
+        var label: String {
+            switch self {
+            case .overdue: "Overdue"
+            case .today: "Today"
+            case .tomorrow: "Tomorrow"
+            case .thisWeek: "This week"
+            case .later: "Later"
+            }
+        }
+    }
+
+    func fetchDueBacklog(inBook bookId: String? = nil, now: Date = Date(), perBucketLimit: Int = 100) throws -> [DueBucket: [WordSummary]] {
+        let cal = Calendar.current
+        let startOfToday = cal.startOfDay(for: now)
+        guard
+            let startOfTomorrow = cal.date(byAdding: .day, value: 1, to: startOfToday),
+            let startOfDay2 = cal.date(byAdding: .day, value: 2, to: startOfToday),
+            let startOfDay7 = cal.date(byAdding: .day, value: 7, to: startOfToday),
+            let startOfDay30 = cal.date(byAdding: .day, value: 30, to: startOfToday)
+        else {
+            return [:]
+        }
+
+        return try dbQueue.read { db in
+            var result: [DueBucket: [WordSummary]] = [:]
+            let buckets: [(DueBucket, Date, Date)] = [
+                (.overdue, .distantPast, startOfToday),
+                (.today, startOfToday, startOfTomorrow),
+                (.tomorrow, startOfTomorrow, startOfDay2),
+                (.thisWeek, startOfDay2, startOfDay7),
+                (.later, startOfDay7, startOfDay30),
+            ]
+            for (bucket, start, end) in buckets {
+                var args: [DatabaseValueConvertible] = []
+                var from = "FROM word w INNER JOIN reviewCard rc ON rc.wordId = w.id"
+                if let bookId {
+                    from += " INNER JOIN wordListEntry wle ON wle.wordId = w.id AND wle.listId = ?"
+                    args.append(bookId)
+                }
+                let sql = """
+                    SELECT
+                      w.id AS id,
+                      w.spelling AS spelling,
+                      w.phonetic AS phonetic,
+                      w.frequency AS frequency,
+                      json_extract(w.data, '$.definitions[0].chinese') AS firstDefZh,
+                      json_extract(w.data, '$.definitions[0].partOfSpeech') AS posLabel,
+                      CASE
+                        WHEN json_extract(w.data, '$.mnemonics') IS NOT NULL
+                          AND json_array_length(json_extract(w.data, '$.mnemonics')) > 0
+                        THEN 1 ELSE 0
+                      END AS hasMnemonic,
+                      rc.state AS cardState
+                    \(from)
+                    WHERE rc.state != 0 AND rc.dueDate >= ? AND rc.dueDate < ?
+                    ORDER BY rc.dueDate ASC
+                    LIMIT ?
+                    """
+                args.append(start)
+                args.append(end)
+                args.append(perBucketLimit)
+                let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(args))
+                let summaries = rows.map(Self.rowToSummary)
+                if !summaries.isEmpty {
+                    result[bucket] = summaries
+                }
+            }
+            return result
+        }
+    }
+
+    /// Count due cards in each bucket (for showing totals in the UI without loading all words).
+    func fetchDueBacklogCounts(inBook bookId: String? = nil, now: Date = Date()) throws -> [DueBucket: Int] {
+        let cal = Calendar.current
+        let startOfToday = cal.startOfDay(for: now)
+        guard
+            let startOfTomorrow = cal.date(byAdding: .day, value: 1, to: startOfToday),
+            let startOfDay2 = cal.date(byAdding: .day, value: 2, to: startOfToday),
+            let startOfDay7 = cal.date(byAdding: .day, value: 7, to: startOfToday),
+            let startOfDay30 = cal.date(byAdding: .day, value: 30, to: startOfToday)
+        else {
+            return [:]
+        }
+
+        return try dbQueue.read { db in
+            var counts: [DueBucket: Int] = [:]
+            let buckets: [(DueBucket, Date, Date)] = [
+                (.overdue, .distantPast, startOfToday),
+                (.today, startOfToday, startOfTomorrow),
+                (.tomorrow, startOfTomorrow, startOfDay2),
+                (.thisWeek, startOfDay2, startOfDay7),
+                (.later, startOfDay7, startOfDay30),
+            ]
+            for (bucket, start, end) in buckets {
+                var args: [DatabaseValueConvertible] = []
+                var join = ""
+                if let bookId {
+                    join = "INNER JOIN wordListEntry wle ON wle.wordId = rc.wordId AND wle.listId = ?"
+                    args.append(bookId)
+                }
+                args.append(start)
+                args.append(end)
+                let sql = """
+                    SELECT COUNT(*) FROM reviewCard rc
+                    \(join)
+                    WHERE rc.state != 0 AND rc.dueDate >= ? AND rc.dueDate < ?
+                    """
+                let cnt = try Int.fetchOne(db, sql: sql, arguments: StatementArguments(args)) ?? 0
+                if cnt > 0 { counts[bucket] = cnt }
+            }
+            return counts
+        }
+    }
+
+    /// Shared row → WordSummary mapping helper.
+    /// `dueDate` is optional in the SELECT — callers that don't need it can omit
+    /// the column and we'll just leave it nil.
+    private static func rowToSummary(_ row: Row) -> WordSummary {
+        let frequencyRaw = (row["frequency"] as? Int) ?? FrequencyTier.common.rawValue
+        let frequency = FrequencyTier(rawValue: frequencyRaw) ?? .common
+        let stateRaw = row["cardState"] as? Int
+        let cardState = stateRaw.flatMap { CardState(rawValue: $0) }
+        let dueDate: Date? = row["dueDate"]
+        return WordSummary(
+            id: row["id"],
+            spelling: row["spelling"],
+            phonetic: row["phonetic"],
+            frequency: frequency,
+            firstDefZh: row["firstDefZh"],
+            posLabel: row["posLabel"],
+            hasMnemonic: (row["hasMnemonic"] as? Int) == 1,
+            cardState: cardState,
+            dueDate: dueDate
+        )
     }
 
     func fetchWord(bySpelling spelling: String) throws -> Word? {
@@ -633,6 +1084,143 @@ nonisolated final class DatabaseService: Sendable {
                     """,
                 arguments: [wordId, bookId, mistakes, duration, mode, Date()]
             )
+        }
+    }
+
+    // MARK: - User Content (mnemonics, notes, ...)
+
+    /// User-authored content row stored in `user_content`.
+    struct UserContent: Identifiable, Hashable {
+        let id: Int64
+        let wordId: String
+        let type: String         // "mnemonic" | "note" | future
+        let content: String
+        let createdAt: Date
+        let updatedAt: Date
+    }
+
+    func addUserContent(wordId: String, type: String, content: String) throws -> Int64 {
+        try dbQueue.write { db in
+            let now = Date()
+            try db.execute(
+                sql: """
+                    INSERT INTO user_content (wordId, type, content, createdAt, updatedAt)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                arguments: [wordId, type, content, now, now]
+            )
+            return db.lastInsertedRowID
+        }
+    }
+
+    func updateUserContent(id: Int64, content: String) throws {
+        try dbQueue.write { db in
+            try db.execute(
+                sql: "UPDATE user_content SET content = ?, updatedAt = ? WHERE id = ?",
+                arguments: [content, Date(), id]
+            )
+        }
+    }
+
+    func deleteUserContent(id: Int64) throws {
+        try dbQueue.write { db in
+            try db.execute(sql: "DELETE FROM user_content WHERE id = ?", arguments: [id])
+        }
+    }
+
+    func fetchUserContent(wordId: String, type: String? = nil) throws -> [UserContent] {
+        try dbQueue.read { db in
+            let sql: String
+            let args: StatementArguments
+            if let type {
+                sql = """
+                    SELECT id, wordId, type, content, createdAt, updatedAt
+                    FROM user_content WHERE wordId = ? AND type = ?
+                    ORDER BY createdAt DESC
+                    """
+                args = [wordId, type]
+            } else {
+                sql = """
+                    SELECT id, wordId, type, content, createdAt, updatedAt
+                    FROM user_content WHERE wordId = ?
+                    ORDER BY createdAt DESC
+                    """
+                args = [wordId]
+            }
+            let rows = try Row.fetchAll(db, sql: sql, arguments: args)
+            return rows.map { row in
+                UserContent(
+                    id: row["id"],
+                    wordId: row["wordId"],
+                    type: row["type"],
+                    content: row["content"],
+                    createdAt: row["createdAt"],
+                    updatedAt: row["updatedAt"]
+                )
+            }
+        }
+    }
+
+    // MARK: - Word-centric queries (for WordDetailView)
+
+    /// The (single) review card for a word, or nil if none has been created.
+    func fetchReviewCard(forWord wordId: String) throws -> ReviewCard? {
+        try dbQueue.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: "SELECT * FROM reviewCard WHERE wordId = ? LIMIT 1",
+                arguments: [wordId]
+            ) else { return nil }
+            return self.rowToCard(row)
+        }
+    }
+
+    /// Recent review logs for a card, newest first.
+    func fetchReviewLogs(cardId: UUID, limit: Int = 10) throws -> [ReviewLog] {
+        try dbQueue.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT * FROM reviewLog WHERE cardId = ?
+                    ORDER BY timestamp DESC LIMIT ?
+                    """,
+                arguments: [cardId.uuidString, limit]
+            )
+            return rows.map { row in
+                ReviewLog(
+                    id: row["id"],
+                    cardId: UUID(uuidString: row["cardId"] as String) ?? UUID(),
+                    rating: Rating(rawValue: row["rating"] as Int) ?? .good,
+                    state: CardState(rawValue: row["state"] as Int) ?? .new,
+                    timestamp: row["timestamp"],
+                    elapsedDays: row["elapsedDays"],
+                    scheduledDays: row["scheduledDays"],
+                    reviewDuration: row["reviewDuration"]
+                )
+            }
+        }
+    }
+
+    /// Word books that contain this word.
+    func fetchBooks(containingWord wordId: String) throws -> [WordBook] {
+        try dbQueue.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT wl.*, COUNT(wle2.wordId) as wordCount
+                FROM wordList wl
+                INNER JOIN wordListEntry wle ON wle.listId = wl.id AND wle.wordId = ?
+                LEFT JOIN wordListEntry wle2 ON wle2.listId = wl.id
+                GROUP BY wl.id
+                ORDER BY wl.name
+                """, arguments: [wordId])
+            return rows.map { row in
+                WordBook(
+                    id: row["id"],
+                    name: row["name"],
+                    description: row["description"],
+                    wordCount: row["wordCount"],
+                    isBuiltin: row["isBuiltin"]
+                )
+            }
         }
     }
 

@@ -19,12 +19,15 @@ erudite/                            ← Git repo root (open in VSCode/Claude Cod
         │   └── AIProviders/
         ├── ViewModels/             ← @Observable view models
         ├── Views/                  ← SwiftUI views (thin shells)
-        │   ├── Main/
-        │   ├── Study/
-        │   ├── Review/
-        │   ├── Library/
-        │   ├── Dashboard/
-        │   └── AI/
+        │   ├── Main/               ← TodayView, ContentView (shell + nav)
+        │   ├── Plan/               ← PlanView (roadmap + workload + queue + backlog)
+        │   ├── Study/              ← StudyView, TypingView (FSRS + qwerty)
+        │   ├── Library/            ← LibraryView (split / push), WordDetailView
+        │   ├── Dashboard/          ← Stats
+        │   ├── AI/                 ← Chat panel
+        │   └── Components/         ← KeyCaptureView, InteractiveText,
+        │                             WordPopoverView, WordSummaryRow,
+        │                             FocusSupport
         ├── Resources/
         │   └── Data/words.json     ← Bundled word database
         └── Assets.xcassets/        ← App icon, colors

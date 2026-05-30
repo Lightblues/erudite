@@ -293,3 +293,26 @@ Build Configuration 之后, 下次按 "Run" 按钮运行的是 debug/release?
 - Product → Show Build Folder in Finder（或 Xcode 菜单栏 Product → Reveal Build Products Folder）
 - 把 Release/Erudite.app 拖到 /Applications
 ```
+
+## fix xcode warning
+下面是 Xcode 中出现的 error/warning, 分别是什么意思? 是否需要修复?
+```sh
+# 根本原因(一句话)
+项目设了 SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor,所以所有类型默认隐式带 @MainActor(包括 Word、ReviewCard、ReviewLog、WordBook、FSRSParameters)。但 DatabaseService 被标成 nonisolated(unsafe) 想跨线程跑数据库 IO——于是只要它在 nonisolated 方法里碰这些 MainActor 类型(初始化、Codable 编解码),就违反 Swift 6 的隔离规则。
+```
+解释一下  SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor, 是什么意思, 然后帮我修复
+```sh
+# 关于 SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor 的小结
+
+这个设置的"哲学"是:App 大多数代码本来就跑在主线程,与其逐个标 @MainActor,不如默认全标,例外用 nonisolated 显式退出。
+
+实践中只有两类东西需要 nonisolated:
+1. 纯数据值类型(本次修复的全部 model)— 它们没有共享可变状态,任何线程都能安全读写。
+2. 明确要跑后台的服务(本次的 DatabaseService)— GRDB 的 IO 必须可以跨线程,不能被 MainActor 锁死。
+
+UI 层(View / ViewModel / @Observable)就保持默认的 MainActor,不用动
+```
+
+@.ea/spec/lessons.md 上面修复 MainActor 的经验写入其中
+
+create new branch then merge. 核心内容是 ai chat 系统 & 修复

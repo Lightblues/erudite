@@ -23,12 +23,12 @@ erudite/
     ├── Erudite.xcodeproj
     └── Erudite/                    ← Source (auto-synced by Xcode)
         ├── App/                    ← @main entry, AppState, AppConfig, Log
-        ├── Models/                 ← Word, ReviewCard, StudySession, WordList
+        ├── Models/                 ← Word, WordSummary, ReviewCard, StudySession, WordList
         ├── Engine/FSRS/            ← Scheduling algorithm (stub, to be implemented)
         ├── Services/               ← DatabaseService (GRDB), WordLoader, Pronunciation
         ├── Services/AI/            ← AI Companion (AgentRuntime, SSE, tools, memory, tracing)
         ├── ViewModels/             ← ChatViewModel
-        ├── Views/                  ← SwiftUI views (Main, Study, Library, Dashboard, AI, Debug)
+        ├── Views/                  ← SwiftUI views (Main, Plan, Study, Library, Dashboard, AI, Components, Debug)
         └── Resources/Data/         ← Bundled word database (words.json)
 ```
 

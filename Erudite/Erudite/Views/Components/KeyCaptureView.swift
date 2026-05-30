@@ -132,9 +132,11 @@ final class KeyNSView: NSView {
         guard isActiveCapture,
               let window = self.window,
               notification.object as? NSWindow == window else { return }
-        // Re-grab focus after popover dismiss or window switch
+        // Re-grab focus after popover dismiss or window switch — but not while
+        // a popover is currently up (let it own the keyboard).
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isActiveCapture else { return }
+            if (AppState.shared?.popoverDepth ?? 0) > 0 { return }
             window.makeFirstResponder(self)
         }
     }
@@ -143,12 +145,23 @@ final class KeyNSView: NSView {
         let result = super.resignFirstResponder()
         guard isActiveCapture else { return result }
 
+        // While a word popover is visible, let it own firstResponder so its
+        // keyboardShortcut(.escape) etc. work. Re-grab once the popover closes.
+        if (AppState.shared?.popoverDepth ?? 0) > 0 {
+            return result
+        }
+
         // Re-grab focus after a runloop cycle, unless a text field needs it
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isActiveCapture,
                   let window = self.window else { return }
             // Don't steal from text input views (e.g., search fields)
             if let current = window.firstResponder, current is NSTextView {
+                return
+            }
+            // Also don't steal while a popover is up (depth may have flipped
+            // between the original resign and this async tick).
+            if (AppState.shared?.popoverDepth ?? 0) > 0 {
                 return
             }
             window.makeFirstResponder(self)

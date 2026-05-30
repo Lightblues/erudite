@@ -285,12 +285,97 @@ automatically the moment the upstream types compiled cleanly.
 
 ---
 
+## 2026-05-30 — Word management overhaul (issue #24)
+
+### List performance: don't decode 13K JSON blobs to render rows
+- **Symptom:** Library felt laggy; every keystroke in the search field re-ran
+  `String.contains` over 13K decoded `Word` structs, and the tier picker called
+  `words.filter { ... }.count` four times per render.
+- **Root cause:** The list view was reading **fat models** (`[Word]`) when it
+  only needed five fields per row.
+- **Fix:** Introduced a `WordSummary` projection populated directly from SQL via
+  `json_extract(data, '$.definitions[0].chinese')` and a `LEFT JOIN` on
+  `reviewCard`. Filtering, sorting, search, pagination all run in SQLite.
+- **Takeaway:** When list rows need a few fields out of a fat blob, don't decode
+  the blob — project the fields you need at the SQL boundary. The "data path
+  fork" (summaries for lists, full models for details) is cheap to maintain and
+  pays for itself in two orders of magnitude on cold-open performance.
+
+### Trust but verify, especially around navigation
+- **Symptom:** After refactoring Library/Plan to use `NavigationLink(value:)` +
+  `.navigationDestination(for:)`, clicking a row did nothing. No error, no log.
+- **Root cause:** `NavigationSplitView`'s detail column doesn't supply its own
+  `NavigationStack`. `.navigationDestination` had no stack to register against,
+  so links became silent no-ops.
+- **Fix:** Wrap each list view in its own `NavigationStack`.
+- **Takeaway:** "Build SUCCEEDED" is necessary, not sufficient. SwiftUI's
+  navigation modifiers fail open — they don't crash, they just don't do
+  anything. Always run the app and click the link before claiming the feature
+  works.
+
+### `.onKeyPress(.escape)` needs focus; popovers don't have it
+- **Symptom:** Esc inside a `WordPopoverView` did nothing. Esc inside a pushed
+  `WordDetailView` (mostly a `ScrollView`) also did nothing.
+- **Root cause:** `.onKeyPress` only fires on the focused view. SwiftUI does
+  not auto-focus popover contents, and `ScrollView`s have no natural focus
+  target. `.focusable()` set on a non-control view is also flaky.
+- **Fix:** Hidden Button + `.keyboardShortcut(.cancelAction)`:
+  ```swift
+  .background(
+      Button("Dismiss") { onDismiss?() }
+          .keyboardShortcut(.cancelAction)
+          .opacity(0).frame(width: 0, height: 0)
+          .accessibilityHidden(true)
+  )
+  ```
+  The Button is in the view tree, so the shortcut is installed for as long as
+  the view is visible. No focus required.
+- **Takeaway:** For Esc inside any container that doesn't naturally hold focus
+  (popovers, sheets without text fields, ScrollViews), `.keyboardShortcut`
+  beats `.onKeyPress` every time. Focus-dependent shortcuts are a footgun.
+
+### Don't drop events to "yield" the keyboard
+- **Symptom:** After my first attempt to coordinate popover Esc with the
+  flashcard host, *all* keys stopped working whenever a popover briefly opened
+  (and sometimes after Typing's Space toggle).
+- **Root cause:** I had `KeyCaptureView.keyDown` return early when
+  `popoverDepth > 0`. If the popover lifecycle didn't fire `onDisappear`
+  cleanly, depth got stuck above zero and the keyboard locked. Even when it
+  did fire, the brief depth>0 window meant Esc bypassed both the popover
+  *and* the host.
+- **Fix:** `keyDown` always forwards. Only the focus *re-grab* in
+  `resignFirstResponder` and `windowDidBecomeKey` is suspended while
+  `popoverDepth > 0`. Events flow normally; only the AppKit-level
+  firstResponder tug-of-war pauses, letting the popover's
+  `.keyboardShortcut(.cancelAction)` actually receive Esc.
+- **Takeaway:** When two systems compete for the keyboard, **never solve it by
+  dropping events**. Solve it at the focus layer (who *owns* firstResponder),
+  not the event layer (who *receives* keys).
+
+### "Open in another tab" kills sessions
+- **Symptom:** A popover's "Open in Library" button would tab-switch and the
+  Typing session was gone.
+- **Root cause:** Switching tabs detaches the host view, firing `onDisappear`
+  → `endSession()` on the typing/flashcard view model.
+- **Fix:** A global modal sheet (`AppState.detailSheetWordId` driving
+  ContentView's `.sheet`) hosts the full `WordDetailView` on top of the
+  current tab. The host stays mounted; the session stays alive.
+- **Takeaway:** "Show details somewhere else" should never mean "switch tabs"
+  if the current tab owns running state. Modal-on-top is the right shape for
+  ephemeral deep-dives.
+
+---
+
 ## Cross-cutting principles
 
 | Theme | Principle |
 |-------|-----------|
 | SwiftUI perf | Re-render frequency × per-render work. Throttle the source; keep `body` cheap; never feed `ForEach` a computed array. |
-| Focus | One source of truth (`focusZone`); derive both layers from it; use AppKit for mouse-driven focus. |
+| List rendering | Don't decode fat models to render thin rows. Project the fields you need at the SQL boundary. |
+| Focus | One source of truth (`focusZone`); derive both layers from it; use AppKit for mouse-driven focus. Never short-circuit event delivery to "yield" the keyboard — yield at the focus layer instead. |
+| Esc handling | Hidden `Button` + `.keyboardShortcut(.cancelAction)` for any container without a natural focus target. `.onKeyPress(.escape)` is fragile. |
+| Navigation | "Build SUCCEEDED" doesn't mean it works. SwiftUI navigation fails open — always click the link before claiming done. |
+| Modal vs tab switch | Show ephemeral deep-dives in a modal sheet, not a tab switch — preserves running session state. |
 | Persistence | Store the full structured form, not a render projection. |
 | AI providers | Make a configurable base URL/model; suspect provider fidelity for tool-call failures; degrade gracefully at limits. |
 | Observability | Tracing/IDs/usage + an in-app debug panel are not optional for a self-built agent. |

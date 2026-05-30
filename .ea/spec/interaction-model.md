@@ -168,11 +168,90 @@ left mouse down
 | `q` | End session | Flashcard |
 | `Tab` | Cycle hide mode | Typing |
 | Letters | Type input | Typing |
+| `Esc` | Dismiss popover / pop pushed WordDetail / dismiss detail sheet / clear Library list selection | Word UI |
+| `⌘O` | Open the focused popover word in a global detail sheet | Word popover |
+| `⌘F` | Focus Library search field | Library |
+| `↑` / `↓` | Move Library list selection (split mode) | Library |
 | `⌘⇧D` | Debug panel | Global |
 
 ---
 
-## 7. Design Notes & Trade-offs
+## 7. Word UI Keyboard (popovers, detail, sheet)
+
+A second focus story sits on top of the chat/main split: word popovers,
+the pushed `WordDetailView`, and the global "Show details" sheet. They are
+not tied to `focusZone` but they do interact with `KeyCaptureView`.
+
+### `popoverDepth` — the focus tug-of-war fix
+
+`AppState.popoverDepth: Int` (`@ObservationIgnored`) tracks how many word
+popovers are visible. Bumped in `onAppear` / decremented in `onDisappear`
+of every word popover (`WordPopoverView`, `NotFoundPopoverView`).
+
+`KeyCaptureView` reads it but **never drops events** based on it. Only the
+focus *re-grab* is suspended:
+
+- `keyDown` always forwards to `onKeyDown`. Events are never silently
+  swallowed.
+- `resignFirstResponder` and `windowDidBecomeKey` skip the async
+  `makeFirstResponder(self)` call when `popoverDepth > 0`. This lets the
+  popover keep firstResponder (so its keyboard shortcuts fire) without
+  KeyCaptureView snatching it back a runloop later.
+
+When the popover closes, depth returns to 0, and the next focus
+notification (or click) restores normal behavior. **Never short-circuit
+`keyDown` based on `popoverDepth` — it strands the keyboard if depth gets
+stuck above zero.**
+
+### Hidden-Button + `.keyboardShortcut(.cancelAction)` for Esc
+
+`.onKeyPress(.escape)` requires the view to hold focus. Inside popovers,
+ScrollViews, and other containers without a natural focus target, that
+focus is unreliable — Esc silently no-ops. The reliable pattern is:
+
+```swift
+.background(
+    Button("Dismiss") { onDismiss?() }
+        .keyboardShortcut(.cancelAction)   // Esc on macOS
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
+)
+```
+
+The Button is part of the view tree, so the shortcut is installed for as
+long as the view is visible. No focus required. Used by:
+
+- `WordPopoverView` and `NotFoundPopoverView` (Esc dismiss).
+- `WordDetailView` when `escapeBehavior == .push` (Esc pops the
+  `NavigationStack`).
+
+### "Show details" sheet (no tab switching)
+
+A popover's `Cmd+O` (or "Show details" footer button) calls
+`AppState.showWordDetailSheet(wordId)`. `ContentView` mounts a global
+`.sheet` that hosts a `NavigationStack { WordDetailView(.push) }`. This
+deliberately doesn't switch tabs, so an in-progress
+Flashcard / Typing / chat session stays alive. Esc / [Done] dismisses.
+
+The earlier "Open in Library" tab-jump approach was abandoned because
+switching tabs fired `onDisappear` on the host view — killing study
+sessions in flight.
+
+### `WordDetailView.escapeBehavior`
+
+Same view, two host modes:
+
+- `.push` — pushed onto a `NavigationStack` (Plan, narrow Library, detail
+  sheet). The hidden-Button shortcut dismisses via
+  `@Environment(\.dismiss)`.
+- `.embedded` — rendered inline as the right pane in split-mode Library.
+  The host (LibraryView) owns Esc — it clears the list selection. The
+  detail view itself ignores Esc to avoid double-actions.
+
+---
+
+## 8. Design Notes & Trade-offs
 
 - **Why a window-level monitor instead of SwiftUI gestures?** SwiftUI `onTapGesture`
   can't reliably detect "click on empty area" without eating selection/drag, and
@@ -195,7 +274,7 @@ left mouse down
 
 ---
 
-## 8. Don'ts (regressions to avoid)
+## 9. Don'ts (regressions to avoid)
 
 - ❌ Don't derive the coordination flag from `@FocusState` — it can't see clicks
   and creates feedback loops. Drive everything from `focusZone`.
@@ -205,3 +284,12 @@ left mouse down
   async `makeFirstResponder` with `isActiveCapture`.
 - ❌ Don't make `⌘.` a blind visibility toggle — it must be focus-aware so that
   pressing it while studying (panel already open) moves focus *into* chat.
+- ❌ Don't short-circuit `KeyCaptureView.keyDown` on `popoverDepth > 0` — events
+  must always be forwarded; only the focus re-grab is suspended. Dropping events
+  strands the keyboard if depth ever gets stuck above zero.
+- ❌ Don't use `.onKeyPress(.escape)` to dismiss popovers / detail pages — focus
+  is unreliable inside popovers and ScrollViews. Use a hidden Button with
+  `.keyboardShortcut(.cancelAction)` instead.
+- ❌ Don't switch tabs to "show a word's full detail" — `onDisappear` on the host
+  kills study sessions in flight. Use the global `.sheet` route via
+  `AppState.showWordDetailSheet`.

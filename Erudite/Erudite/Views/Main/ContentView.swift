@@ -54,6 +54,13 @@ struct ContentView: View {
         }
         .background(MainWindowAccessor())
         .animation(.easeInOut(duration: 0.2), value: showAIPanel)
+        // Global word-detail sheet: any popover (in Today/Plan/Flashcard/Typing
+        // /InteractiveText) can call AppState.showWordDetailSheet(wordId) to
+        // surface a full WordDetailView without switching tabs — keeping the
+        // active study session alive. Esc dismisses the sheet.
+        .sheet(item: detailSheetBinding) { wordId in
+            DetailSheet(wordId: wordId)
+        }
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Button {
@@ -118,6 +125,8 @@ struct ContentView: View {
         switch tab {
         case .today:
             TodayView()
+        case .plan:
+            PlanView()
         case .flashcard:
             StudyView()
         case .typing:
@@ -126,6 +135,57 @@ struct ContentView: View {
             LibraryView()
         case .dashboard:
             DashboardView()
+        }
+    }
+
+    /// Bridges AppState.detailSheetWordId (a String?) to .sheet(item:) which
+    /// needs an Identifiable. We wrap the wordId in a tiny Identifiable struct
+    /// so the same string driving multiple lookups still re-presents the sheet.
+    private var detailSheetBinding: Binding<DetailSheetItem?> {
+        Binding(
+            get: {
+                appState.detailSheetWordId.map { DetailSheetItem(id: $0) }
+            },
+            set: { newValue in
+                appState.detailSheetWordId = newValue?.id
+            }
+        )
+    }
+}
+
+private struct DetailSheetItem: Identifiable, Hashable {
+    let id: String
+}
+
+/// Sheet wrapper that loads the full Word and renders WordDetailView with a
+/// NavigationStack — so the navigation title shows and any nested pushes
+/// (none yet, but keeps it forward-compatible) work.
+private struct DetailSheet: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
+    let wordId: DetailSheetItem
+    @State private var word: Word?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let word {
+                    WordDetailView(word: word, escapeBehavior: .push)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") { dismiss() }
+                            }
+                        }
+                } else {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+        }
+        .frame(minWidth: 560, minHeight: 600)
+        .task(id: wordId.id) {
+            guard let db = appState.databaseService else { return }
+            self.word = try? db.fetchWord(id: wordId.id)
         }
     }
 }

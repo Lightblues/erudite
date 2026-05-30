@@ -326,7 +326,69 @@ CREATE TABLE ai_cache (
 );
 
 CREATE INDEX idx_ai_cache_word ON ai_cache(word_id, content_type);
+
+-- User-generated content (mnemonics, notes, future categories).
+-- Single table keyed by `type` so new content kinds ship without migration.
+CREATE TABLE user_content (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    wordId TEXT NOT NULL REFERENCES word(id) ON DELETE CASCADE,
+    type TEXT NOT NULL,                 -- 'mnemonic' | 'note' | future
+    content TEXT NOT NULL,
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL
+);
+
+CREATE INDEX idx_user_content_word ON user_content(wordId, type);
 ```
+
+---
+
+## WordSummary Projection (list views)
+
+`Word` is a fat model: definitions, examples, synonyms, roots, mnemonics,
+tags. Library / Today / Plan all show *list rows* that need only a few
+fields each. Decoding 13K full `Word` JSON blobs to render a list is
+wasteful (and was the source of Library lag pre-erudite-24).
+
+So list views read a lightweight `WordSummary` instead, populated directly
+from SQL via `json_extract()`:
+
+```swift
+struct WordSummary: Identifiable, Hashable {
+    let id: String              // wordId
+    let spelling: String
+    let phonetic: String?
+    let frequency: FrequencyTier
+    let firstDefZh: String?     // json_extract(...definitions[0].chinese)
+    let posLabel: String?       // json_extract(...definitions[0].partOfSpeech)
+    let hasMnemonic: Bool       // json_array_length(mnemonics) > 0
+    let cardState: CardState?   // LEFT JOIN reviewCard
+    let dueDate: Date?          // populated by queries that need it
+}
+```
+
+The "data path forks" by design:
+
+- **List paths** (Library, Today preview, Plan queue/backlog) read
+  `[WordSummary]` from SQL. Filtering, sorting, pagination, and search all
+  run in the database.
+- **Detail paths** (`WordDetailView`) read the full `Word` via
+  `fetchWord(id:)` only when the user opens a row.
+
+This is what makes Library responsive at 13K words; the cost is a small
+amount of duplicated query code (one for summaries, one for full).
+
+### Key DB methods
+
+| Purpose | Method |
+|---------|--------|
+| Library / generic list | `fetchWordSummaries(book, tier, state, search, sort, limit, offset)` + `fetchWordSummaryCount(...)` |
+| Today: due preview | `fetchDueSummaries(now, inBook, limit)` |
+| Today / Plan: new queue | `fetchNewWordSummaries(inBook, limit)` |
+| Plan: workload chart | `fetchDueCountsByDay(daysAhead, inBook)` → `[(Date, Int)]` |
+| Plan: backlog groups | `fetchDueBacklog(inBook, perBucketLimit)` and `fetchDueBacklogCounts(...)` over `DueBucket` (overdue/today/tomorrow/thisWeek/later) |
+| WordDetail: card + history | `fetchReviewCard(forWord:)`, `fetchReviewLogs(cardId:limit:)`, `fetchBooks(containingWord:)` |
+| User content (mnemonics today, notes next) | `addUserContent`, `updateUserContent`, `deleteUserContent`, `fetchUserContent(wordId, type?)` |
 
 ---
 

@@ -2,18 +2,105 @@
 
 ## 1. Today / Home
 
-The entry point when opening the app.
+The entry point when opening the app. Shows progress at a glance plus the
+actual words queued for today — not just counts.
 
-### AI Daily Briefing
+### Layout (current)
+
+```
+┌── Today ────────────────────────────────────────────────────┐
+│                  Good evening!                              │
+│                  Friday, May 30                             │
+│                                                             │
+│  📕 GRE Core 500 ▼                                          │
+│  ✓ Learned 234   ↻ Due 12   + Remaining 266                │
+│  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 47%               │
+│                                                             │
+│  [Start Learning]  [Review Due]  [Type Practice]            │
+│  ─────────────────────────────────────────────────────────  │
+│                                                             │
+│  ┌─ Reviews (12) ───────────┐  ┌─ New (10) ──────────────┐ │
+│  │ ● aberrant     1d late    │  │ ◯ obstreperous          │ │
+│  │ ● coalesce     today      │  │ ◯ perfidious            │ │
+│  │ ● equivocate   today      │  │ ◯ quintessence          │ │
+│  │ ⋯ scroll for more        │  │ ⋯ scroll for more       │ │
+│  └──────────────────────────┘  └─────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
+
+- **Two-column preview** (Reviews / New): each row shows spelling + POS +
+  first Chinese def. Reviews rows include a relative due-date label
+  computed at local-day boundaries (`today` / `1d late` / `in 2d`).
+- **Tapping a row** opens a `WordPopoverView` for a quick peek.
+- **Empty columns** show inline "No reviews due" / "No new words queued"
+  instead of a separate banner.
+- Rows render from lightweight `WordSummary` projections (no full-word
+  JSON decoded for the list). See `data.md` for the projection model.
+
+### AI Daily Briefing (planned, not yet built)
 - Summarizes yesterday's progress
-- States today's plan (N words to review + M new words, estimated time)
 - Highlights focus areas ("yesterday's 'criticism' word group had low accuracy")
-- Quick stats: streak days, mastered count, projected completion date
+- Streak days, mastered count, projected completion date
 
 ### Quick Actions
 - [Start Learning] → FSRS flashcard session (mixed new + due)
 - [Review Due] → Due cards only
 - [Type Practice] → Typing tab (qwerty-learner style)
+
+---
+
+## 1b. Plan
+
+A second top-level tab dedicated to *future* work. Today is "what now?";
+Plan is "what's coming?"
+
+### Layout (four sections, top → bottom)
+
+```
+┌── Plan ────────────────────────────────────────────────────┐
+│  Roadmap                                                    │
+│  GRE Core 500 ━━━━━━━━━━━━●━━━━━━━━━━━━━ 234/500 (47%)     │
+│  At 10 new/day, ETA ~27 days.                               │
+│  Estimate varies with review accuracy.                      │
+│                                                             │
+│  7-Day Workload                                             │
+│   30 ┤                                                      │
+│   20 ┤   ▆▆                                                 │
+│   10 ┤▄▄ ▆▆ ▆▆ ▅▅ ▃▃ ▂▂ ▂▂                                  │
+│      └─Mon Tue Wed Thu Fri Sat Sun                          │
+│                                                             │
+│  New Words Queue (next 50)                                  │
+│   235  obstreperous   adj 吵闹的                             │
+│   236  perfidious     adj 背信弃义的                         │
+│   ⋯                                                          │
+│                                                             │
+│  Due Backlog                                                │
+│   ▾ Today (12)        aberrant  coalesce  …                 │
+│   ▸ Tomorrow (8)                                            │
+│   ▸ This week (45)                                          │
+│   ▸ Later (203)                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Roadmap
+- Progress bar against the active book; ETA in days at the daily new-word
+  pace. Caveat surfaced about FSRS accuracy variance.
+
+### 7-Day Workload
+- Swift Charts `BarMark` of upcoming due-card load per day.
+- Snapshot disclaimer below — every rating shifts future dates.
+
+### New Words Queue
+- Next 50 words by book sortOrder. Click to push the full WordDetailView.
+
+### Due Backlog
+- DisclosureGroups for `Overdue` / `Today` / `Tomorrow` / `This week` /
+  `Later` (next 30 days). Each shows a per-bucket count and expands to
+  show up to 30 words; "and N more" appears when the cap is hit.
+
+### Note: "All Books" mode
+- When no active book is selected, Roadmap hides itself; Workload / Queue /
+  Backlog show global counts.
 
 ---
 
@@ -352,28 +439,93 @@ AI recommends the optimal mode based on:
 
 ## 4. Word Library (词库)
 
-### Word List Management
-- Predefined tiers: Core (500) / Common (1000) / Advanced (1500+)
+### Layout
+
+Mail-style split when the window is wide enough (≥ 900pt), single-column
+push navigation otherwise. Layout selection is automatic via `GeometryReader`.
+
+```
+┌── Library (wide) ───────────────────────────────────────────┐
+│ [search] [Book ▾] [Tier ▾] [State ▾] [Sort ▾]               │
+│ ─────────────────────────────────────────────────────────── │
+│  ●  aberrant   /æˈber.ənt/ adj 异常的    Review   │ aberrant │
+│     coalesce   ...          v   联合     Learning │ /æˈber/  │
+│     equivocate ...          v   含糊其辞  Review  │ ━━━━━━  │
+│     garrulous  ...          adj 啰嗦的   New      │ Learning │
+│  ⋯                                                │ Progress │
+│                                                  │ ⋯        │
+│ Showing 200 of 13,422 · [Load More]              │          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Filtering, Sorting, Search
+
+All run as SQL — never as in-memory filtering of decoded `Word` blobs.
+Backed by `WordSummary` projections; see `data.md`.
+
+- **Search** (debounced 300ms): `LIKE` on `spelling` or first Chinese def.
+- **Book filter** (active book): `INNER JOIN wordListEntry`.
+- **Tier filter**: Core / Common / Advanced.
+- **State filter**: New / Learning / Review / Mature (Mature ≈ Review +
+  stability ≥ 21d).
+- **Sort**: Frequency / A→Z / Due date / Most lapses.
+- **Pagination**: 200/page with a Load More button (no infinite scroll).
+
+### Keyboard browsing (split mode)
+
+- `↑` / `↓` move list selection (`List(selection:)`).
+- `Esc` clears selection (right pane reverts to "Select a word").
+- `Cmd+F` focuses the search field.
+- Selecting a row lazily fetches the full `Word` and renders
+  `WordDetailView(escapeBehavior: .embedded)` in the right pane —
+  the same view used elsewhere, just without its own Esc handler.
+
+### Word List Management (planned, not yet built)
 - Custom groups (user-created)
 - Smart groups: "This week's mistakes", "Confusion pairs", "Low retention"
 - Import: Anki .apkg, CSV/TSV, plain text word list
 - Export: Anki-compatible, CSV
 
-### Word Root Explorer
+### Word Root Explorer (planned)
 - Visual morpheme tree: select a root → see all derived words
 - Root-based study sessions ("learn all bene- words together")
-- Construction analysis: prefix + root + suffix breakdown
 - Interactive: tap any segment to see other words sharing it
 
 ### Word Detail View
-- All definitions (English + Chinese)
-- Root breakdown
-- Example sentences (with source tags)
-- Synonym/antonym groups
-- Sentiment label
-- User's personal mnemonics (editable)
-- FSRS stats for this word (next due, stability, lapses)
-- AI-generated content (expandable)
+
+Sections, top → bottom:
+
+- **Header** — spelling, IPA, frequency tier badge.
+- **Learning Progress** (GroupBox at top — built):
+  - State badge (`New` / `Learning` / `Review` / `Relearning`)
+  - Due date in plain English (`Due in 3 days` / `Overdue by 2 days`)
+  - Stat row: reps · lapses · accuracy% · stability (d) · difficulty
+  - Recent ratings tape: last 8 ratings as colored chips (`✓` / `~` / `✗` / `⚡`)
+  - Books containing this word as chips
+- **Definitions** (English + Chinese) — interactive English text.
+- **Examples** with source tags — interactive English text.
+- **Mnemonics** — split into:
+  - **Builtin** (yellow `lightbulb.fill`, locked) — from bundled `word.mnemonics`
+  - **Yours** (purple `pencil.circle.fill`, editable + deletable) — from `user_content` table, `type='mnemonic'`
+  - `[+ Add yours]` button → `MnemonicEditor` sheet
+- **Synonyms** (chips, each tappable for popover lookup).
+- **Word Roots** — prefix + root + suffix breakdown.
+- **Info** — frequency, sentiment, tags.
+
+#### Hosting modes (`escapeBehavior`)
+
+- `.push` — pushed onto a `NavigationStack` (Plan, narrow Library, modal
+  detail sheet). Esc dismisses via a hidden
+  `Button.keyboardShortcut(.cancelAction)` (no focus required).
+- `.embedded` — rendered inline as the split-Library detail pane. The
+  host owns Esc (clears the list selection); the view itself ignores it.
+
+#### "Show details" sheet
+
+Any popover whose host isn't Library can call
+`AppState.showWordDetailSheet(wordId)` to open the full `WordDetailView`
+in a modal sheet on top of the current tab — keeping the active study
+session alive. `Cmd+O` triggers it; `Esc` / `[Done]` dismisses.
 
 ---
 
