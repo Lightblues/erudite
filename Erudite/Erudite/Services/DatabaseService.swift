@@ -183,6 +183,21 @@ nonisolated final class DatabaseService: Sendable {
                 t.column("sessionId", .text)
             }
             try db.create(index: "idx_ai_traces_time", on: "ai_traces", columns: ["timestamp"], ifNotExists: true)
+
+            // User-generated content (mnemonics, notes, ...).
+            // Single table keyed by `type` so we can add new content categories
+            // without schema migration. `content` is plain text; we don't try
+            // to be clever about formats.
+            try db.create(table: "user_content", ifNotExists: true) { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("wordId", .text).notNull()
+                    .references("word", onDelete: .cascade)
+                t.column("type", .text).notNull()       // "mnemonic" | "note" | future
+                t.column("content", .text).notNull()
+                t.column("createdAt", .datetime).notNull()
+                t.column("updatedAt", .datetime).notNull()
+            }
+            try db.create(index: "idx_user_content_word", on: "user_content", columns: ["wordId", "type"], ifNotExists: true)
         }
     }
 
@@ -1069,6 +1084,143 @@ nonisolated final class DatabaseService: Sendable {
                     """,
                 arguments: [wordId, bookId, mistakes, duration, mode, Date()]
             )
+        }
+    }
+
+    // MARK: - User Content (mnemonics, notes, ...)
+
+    /// User-authored content row stored in `user_content`.
+    struct UserContent: Identifiable, Hashable {
+        let id: Int64
+        let wordId: String
+        let type: String         // "mnemonic" | "note" | future
+        let content: String
+        let createdAt: Date
+        let updatedAt: Date
+    }
+
+    func addUserContent(wordId: String, type: String, content: String) throws -> Int64 {
+        try dbQueue.write { db in
+            let now = Date()
+            try db.execute(
+                sql: """
+                    INSERT INTO user_content (wordId, type, content, createdAt, updatedAt)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                arguments: [wordId, type, content, now, now]
+            )
+            return db.lastInsertedRowID
+        }
+    }
+
+    func updateUserContent(id: Int64, content: String) throws {
+        try dbQueue.write { db in
+            try db.execute(
+                sql: "UPDATE user_content SET content = ?, updatedAt = ? WHERE id = ?",
+                arguments: [content, Date(), id]
+            )
+        }
+    }
+
+    func deleteUserContent(id: Int64) throws {
+        try dbQueue.write { db in
+            try db.execute(sql: "DELETE FROM user_content WHERE id = ?", arguments: [id])
+        }
+    }
+
+    func fetchUserContent(wordId: String, type: String? = nil) throws -> [UserContent] {
+        try dbQueue.read { db in
+            let sql: String
+            let args: StatementArguments
+            if let type {
+                sql = """
+                    SELECT id, wordId, type, content, createdAt, updatedAt
+                    FROM user_content WHERE wordId = ? AND type = ?
+                    ORDER BY createdAt DESC
+                    """
+                args = [wordId, type]
+            } else {
+                sql = """
+                    SELECT id, wordId, type, content, createdAt, updatedAt
+                    FROM user_content WHERE wordId = ?
+                    ORDER BY createdAt DESC
+                    """
+                args = [wordId]
+            }
+            let rows = try Row.fetchAll(db, sql: sql, arguments: args)
+            return rows.map { row in
+                UserContent(
+                    id: row["id"],
+                    wordId: row["wordId"],
+                    type: row["type"],
+                    content: row["content"],
+                    createdAt: row["createdAt"],
+                    updatedAt: row["updatedAt"]
+                )
+            }
+        }
+    }
+
+    // MARK: - Word-centric queries (for WordDetailView)
+
+    /// The (single) review card for a word, or nil if none has been created.
+    func fetchReviewCard(forWord wordId: String) throws -> ReviewCard? {
+        try dbQueue.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: "SELECT * FROM reviewCard WHERE wordId = ? LIMIT 1",
+                arguments: [wordId]
+            ) else { return nil }
+            return self.rowToCard(row)
+        }
+    }
+
+    /// Recent review logs for a card, newest first.
+    func fetchReviewLogs(cardId: UUID, limit: Int = 10) throws -> [ReviewLog] {
+        try dbQueue.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT * FROM reviewLog WHERE cardId = ?
+                    ORDER BY timestamp DESC LIMIT ?
+                    """,
+                arguments: [cardId.uuidString, limit]
+            )
+            return rows.map { row in
+                ReviewLog(
+                    id: row["id"],
+                    cardId: UUID(uuidString: row["cardId"] as String) ?? UUID(),
+                    rating: Rating(rawValue: row["rating"] as Int) ?? .good,
+                    state: CardState(rawValue: row["state"] as Int) ?? .new,
+                    timestamp: row["timestamp"],
+                    elapsedDays: row["elapsedDays"],
+                    scheduledDays: row["scheduledDays"],
+                    reviewDuration: row["reviewDuration"]
+                )
+            }
+        }
+    }
+
+    /// Word books that contain this word.
+    func fetchBooks(containingWord wordId: String) throws -> [WordBook] {
+        try dbQueue.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT wl.*, COUNT(wle2.wordId) as wordCount
+                FROM wordList wl
+                INNER JOIN wordListEntry wle ON wle.listId = wl.id AND wle.wordId = ?
+                LEFT JOIN wordListEntry wle2 ON wle2.listId = wl.id
+                GROUP BY wl.id
+                ORDER BY wl.name
+                """, arguments: [wordId])
+            return rows.map { row in
+                WordBook(
+                    id: row["id"],
+                    name: row["name"],
+                    description: row["description"],
+                    wordCount: row["wordCount"],
+                    isBuiltin: row["isBuiltin"]
+                )
+            }
         }
     }
 
