@@ -13,6 +13,7 @@ struct DebugPanelView: View {
         case logs = "Logs"
         case aiTraces = "AI Traces"
         case stats = "Stats"
+        case data = "Data"
     }
 
     var body: some View {
@@ -59,6 +60,8 @@ struct DebugPanelView: View {
                 aiTracesView
             case .stats:
                 statsView
+            case .data:
+                DataDiagnosticsView()
             }
         }
         .frame(minWidth: 600, minHeight: 300)
