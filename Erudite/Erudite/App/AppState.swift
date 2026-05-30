@@ -47,6 +47,18 @@ final class AppState {
     /// Set by AppState.openWordInLibrary; cleared by LibraryView after handling.
     var pendingLibraryWordId: String? = nil
 
+    /// When non-nil, ContentView shows a modal sheet with the full WordDetailView
+    /// for this word. Used by the popover's Cmd+O / "Show details" action so the
+    /// user can deep-dive without leaving their current tab (Typing / Flashcard
+    /// sessions stay alive).
+    var detailSheetWordId: String? = nil
+
+    /// Open the full WordDetailView in a modal sheet on top of the current tab.
+    /// Preferred over openWordInLibrary because it doesn't disrupt study sessions.
+    func showWordDetailSheet(_ wordId: String) {
+        detailSheetWordId = wordId
+    }
+
     /// Switch to the Library tab and request that `wordId` becomes the selected row.
     /// Used by the popover's Cmd+O / "Open in Library" action so users can jump from
     /// a popover view straight into the full WordDetail panel.

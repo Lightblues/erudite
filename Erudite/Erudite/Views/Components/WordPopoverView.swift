@@ -3,9 +3,10 @@ import SwiftUI
 // MARK: - Word Popover View (Compact Dictionary Card)
 
 /// Where the popover was opened from. Affects which actions make sense:
-/// - `.library`: user is already in Library — "Open in Library" is redundant, hide it
-/// - `.elsewhere`: anywhere else (Today, Plan, Flashcard, Typing, definition click) —
-///   show "Open in Library" so the user can jump to the full WordDetail
+/// - `.library`: user is already in Library and the right-hand pane already
+///   shows full details, so the "Show details" sheet would be redundant.
+/// - `.elsewhere`: anywhere else (Today, Plan, Flashcard, Typing, definition
+///   click) — show "Show details" so the user can deep-dive without leaving.
 nonisolated enum WordPopoverHost: Hashable {
     case elsewhere
     case library
@@ -119,20 +120,20 @@ struct WordPopoverView: View {
 
             Divider()
 
-            // Footer: external links + (optional) Open in Library
+            // Footer: external links + (optional) Show details
             HStack(spacing: 12) {
                 if host == .elsewhere {
                     Button {
-                        appState.openWordInLibrary(word.id)
+                        appState.showWordDetailSheet(word.id)
                         onDismiss?()
                     } label: {
-                        Label("Open in Library", systemImage: "books.vertical")
+                        Label("Show details", systemImage: "doc.text.magnifyingglass")
                             .font(.caption)
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.blue)
                     .keyboardShortcut("o", modifiers: .command)
-                    .help("Open this word in the Library — ⌘O")
+                    .help("Open the full WordDetail in a sheet — ⌘O")
                 }
 
                 Spacer()
@@ -158,13 +159,20 @@ struct WordPopoverView: View {
         }
         .padding(16)
         .frame(width: 360, alignment: .leading)
-        // Esc dismisses the popover. We focusable() so the .onKeyPress modifier
-        // actually receives keys; SwiftUI auto-focuses popover contents on appear.
-        .focusable()
-        .onKeyPress(.escape) {
-            onDismiss?()
-            return .handled
-        }
+        // Esc dismiss via a zero-size hidden Button. Unlike .onKeyPress(.escape),
+        // .keyboardShortcut works without the view needing focus, so it's
+        // reliable inside a popover where focus is unpredictable. The Button is
+        // not visible but is part of the view tree so the system installs the
+        // shortcut while the popover is on screen.
+        .background(
+            Button("Dismiss") {
+                onDismiss?()
+            }
+            .keyboardShortcut(.cancelAction)   // Esc + Cmd+. (cancelAction = .escape on macOS)
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+        )
         .onAppear { appState.popoverDidAppear() }
         .onDisappear { appState.popoverDidDisappear() }
     }
@@ -212,11 +220,13 @@ struct NotFoundPopoverView: View {
         }
         .padding(16)
         .frame(width: 280)
-        .focusable()
-        .onKeyPress(.escape) {
-            onDismiss?()
-            return .handled
-        }
+        .background(
+            Button("Dismiss") { onDismiss?() }
+                .keyboardShortcut(.cancelAction)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
+        )
         .onAppear { appState.popoverDidAppear() }
         .onDisappear { appState.popoverDidDisappear() }
     }

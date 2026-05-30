@@ -67,20 +67,9 @@ struct LibraryView: View {
         .onChange(of: selectedWordId) { _, newId in
             Task { await loadFullWord(for: newId) }
         }
-        // Pending jump from popover Cmd+O / Open in Library: select that word
-        // and clear the request token. We also clear filters that might hide it.
-        .onChange(of: appState.pendingLibraryWordId) { _, wordId in
-            guard let wordId else { return }
-            Task { await handlePendingJump(to: wordId) }
-        }
         .task {
             await loadTotalCount()
             await reload()
-            // If a jump was queued before the view appeared (cold tab switch),
-            // honor it now.
-            if let wordId = appState.pendingLibraryWordId {
-                await handlePendingJump(to: wordId)
-            }
         }
     }
 
@@ -372,34 +361,6 @@ struct LibraryView: View {
             print("Library loadFullWord failed: \(error)")
             self.selectedFullWord = nil
         }
-    }
-
-    /// Handle a popover "Open in Library" jump. Clear filters that would hide
-    /// the target word, then select it and consume the request.
-    private func handlePendingJump(to wordId: String) async {
-        // Clear filters most likely to hide the word — book is unsafe to clear
-        // because the user might be intentionally narrowing, but tier/state
-        // would silently drop it. Search is most likely to hide it.
-        if !searchText.isEmpty {
-            searchText = ""
-            debouncedSearch = ""
-        }
-        if selectedTier != nil { selectedTier = nil }
-        if selectedState != .all { selectedState = .all }
-
-        await reload()
-
-        // If the target isn't in the current page, fetch a single-word summary
-        // to seed the detail panel. The list won't show it (book filter etc.),
-        // but the user still gets the content they asked for.
-        if !summaries.contains(where: { $0.id == wordId }),
-           let db = appState.databaseService,
-           let word = try? db.fetchWord(id: wordId) {
-            self.selectedFullWord = word
-        }
-
-        selectedWordId = wordId
-        appState.pendingLibraryWordId = nil
     }
 }
 

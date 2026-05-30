@@ -85,17 +85,20 @@ struct WordDetailView: View {
                 onSave: { _ in Task { await reloadUserMnemonics() } }
             )
         }
-        // Esc dismisses when pushed onto a navigation stack. We focusable() so
-        // the modifier reliably receives keys even though the page is mostly
-        // scrollable text (no native focus targets).
-        .focusable(escapeBehavior == .push)
-        .onKeyPress(.escape) {
-            if escapeBehavior == .push {
-                dismiss()
-                return .handled
+        // Esc-to-dismiss in push contexts (Plan, narrow Library, detail sheet).
+        // Hidden Button + keyboardShortcut works without focus tracking — unlike
+        // .onKeyPress which needs the view to be focused, fragile in ScrollViews.
+        .background(
+            Group {
+                if escapeBehavior == .push {
+                    Button("Dismiss") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
+                        .opacity(0)
+                        .frame(width: 0, height: 0)
+                        .accessibilityHidden(true)
+                }
             }
-            return .ignored
-        }
+        )
     }
 
     // MARK: - Header
