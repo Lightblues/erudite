@@ -421,6 +421,189 @@ nonisolated final class DatabaseService: Sendable {
         }
     }
 
+    /// Counts how many filter-matching rows come *before* the first row whose
+    /// spelling starts with `letter` (case-insensitive), under alphabetical
+    /// sort. This is the offset Library uses to jump-scroll to a letter.
+    ///
+    /// Returns nil if no matching word starts with that letter (so the UI
+    /// can dim that letter on the jump bar).
+    func offsetForFirstSpelling(
+        startingWith letter: Character,
+        book: String? = nil,
+        state: WordStateFilter = .all,
+        search: String? = nil
+    ) throws -> Int? {
+        try dbQueue.read { db in
+            let letterStr = String(letter).lowercased()
+            // Build the same WHERE clauses as the main summary query, but
+            // counting rows that come strictly BEFORE the target letter
+            // under spelling-COLLATE-NOCASE order. We also need to know
+            // whether the target letter has any rows at all.
+            var clauses: [String] = []
+            var args: [DatabaseValueConvertible] = []
+
+            var from = "FROM word w LEFT JOIN reviewCard rc ON rc.wordId = w.id"
+            if let book {
+                from += " INNER JOIN wordListEntry wle ON wle.wordId = w.id AND wle.listId = ?"
+                args.append(book)
+            }
+            switch state {
+            case .all: break
+            case .new: clauses.append("(rc.state IS NULL OR rc.state = 0)")
+            case .learning: clauses.append("rc.state IN (1, 3)")
+            case .review: clauses.append("rc.state = 2")
+            case .mature: clauses.append("rc.state = 2 AND rc.stability >= 21")
+            }
+            if let search, !search.isEmpty {
+                let pattern = "%\(search)%"
+                clauses.append("(w.spelling LIKE ? OR json_extract(w.data, '$.definitions[0].chinese') LIKE ?)")
+                args.append(pattern)
+                args.append(pattern)
+            }
+            // Count rows whose lowercased first character precedes our target.
+            let baseWhere = clauses.isEmpty ? "" : " AND " + clauses.joined(separator: " AND ")
+
+            // Target letter has any row at all?
+            let hasSql = "SELECT COUNT(*) \(from) WHERE LOWER(SUBSTR(w.spelling, 1, 1)) = ?\(baseWhere)"
+            let hasCount = try Int.fetchOne(db, sql: hasSql, arguments: StatementArguments(args + [letterStr])) ?? 0
+            if hasCount == 0 { return nil }
+
+            // Rows that sort before the target.
+            let beforeSql = "SELECT COUNT(*) \(from) WHERE LOWER(SUBSTR(w.spelling, 1, 1)) < ?\(baseWhere)"
+            let before = try Int.fetchOne(db, sql: beforeSql, arguments: StatementArguments(args + [letterStr])) ?? 0
+            return before
+        }
+    }
+
+    /// Returns the set of starting letters (lowercased) that have at least one
+    /// row under the current filters. Drives the dim/active state of the jump
+    /// bar so the user only sees letters they can actually jump to.
+    func availableStartingLetters(
+        book: String? = nil,
+        state: WordStateFilter = .all,
+        search: String? = nil
+    ) throws -> Set<String> {
+        try dbQueue.read { db in
+            var clauses: [String] = []
+            var args: [DatabaseValueConvertible] = []
+            var from = "FROM word w LEFT JOIN reviewCard rc ON rc.wordId = w.id"
+            if let book {
+                from += " INNER JOIN wordListEntry wle ON wle.wordId = w.id AND wle.listId = ?"
+                args.append(book)
+            }
+            switch state {
+            case .all: break
+            case .new: clauses.append("(rc.state IS NULL OR rc.state = 0)")
+            case .learning: clauses.append("rc.state IN (1, 3)")
+            case .review: clauses.append("rc.state = 2")
+            case .mature: clauses.append("rc.state = 2 AND rc.stability >= 21")
+            }
+            if let search, !search.isEmpty {
+                let pattern = "%\(search)%"
+                clauses.append("(w.spelling LIKE ? OR json_extract(w.data, '$.definitions[0].chinese') LIKE ?)")
+                args.append(pattern)
+                args.append(pattern)
+            }
+            let whereClause = clauses.isEmpty ? "" : " WHERE " + clauses.joined(separator: " AND ")
+            let sql = "SELECT DISTINCT LOWER(SUBSTR(w.spelling, 1, 1)) AS l \(from)\(whereClause)"
+            let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(args))
+            var letters = Set<String>()
+            for row in rows {
+                if let l: String = row["l"] { letters.insert(l) }
+            }
+            return letters
+        }
+    }
+
+    // MARK: - Integrity checks (DataDiagnosticsView)
+
+    /// Aggregate DB-internal consistency check. Used by DataDiagnosticsView
+    /// to spot drift between word / reviewCard / wordListEntry / user_content
+    /// without forcing the user to ad-hoc SQL their DB.
+    nonisolated struct IntegrityReport: Sendable {
+        /// reviewCard rows whose wordId points at a word that no longer exists.
+        var orphanReviewCards: Int
+        /// wordListEntry rows whose wordId is missing from word.
+        var orphanBookEntries: Int
+        /// user_content rows whose wordId is missing from word.
+        var orphanUserContent: Int
+        /// Words present in word that have no reviewCard at all (should be 0
+        /// — every word gets a fresh card on insert via createCardsForNewWords).
+        var wordsWithoutCard: Int
+        /// reviewCard rows where (state != 0) but no reviewLog exists. Not
+        /// strictly an error — could be legacy data — but worth surfacing.
+        var nonNewCardsWithoutLog: Int
+        /// Words missing core display fields after v3.0 (chinese def OR
+        /// mnemonic empty). Should be ~0 after upgrade.
+        var wordsMissingChineseDef: Int
+        var wordsMissingMnemonic: Int
+        /// Words that DON'T have the `ai_enriched` tag (so they predate AI
+        /// enrichment OR were API-cached without enrichment).
+        var wordsNotAIEnriched: Int
+        /// Word-book entry sanity: per-book count vs wordbooks.json's expected.
+        /// Not directly available from this query — caller computes by
+        /// comparing fetchWordBooks() against the manifest.
+    }
+
+    func checkIntegrity() throws -> IntegrityReport {
+        try dbQueue.read { db in
+            let orphanCards = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM reviewCard rc
+                LEFT JOIN word w ON w.id = rc.wordId
+                WHERE w.id IS NULL
+                """) ?? 0
+            let orphanEntries = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM wordListEntry wle
+                LEFT JOIN word w ON w.id = wle.wordId
+                WHERE w.id IS NULL
+                """) ?? 0
+            let orphanUC = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM user_content uc
+                LEFT JOIN word w ON w.id = uc.wordId
+                WHERE w.id IS NULL
+                """) ?? 0
+            let noCard = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM word w
+                LEFT JOIN reviewCard rc ON rc.wordId = w.id
+                WHERE rc.id IS NULL
+                """) ?? 0
+            let nonNewNoLog = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM reviewCard rc
+                WHERE rc.state != 0 AND NOT EXISTS (
+                    SELECT 1 FROM reviewLog rl WHERE rl.cardId = rc.id
+                )
+                """) ?? 0
+            let missingZh = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM word w
+                WHERE json_extract(w.data, '$.definitions[0].chinese') IS NULL
+                   OR json_extract(w.data, '$.definitions[0].chinese') = ''
+                """) ?? 0
+            let missingMnem = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM word w
+                WHERE json_array_length(json_extract(w.data, '$.mnemonics')) = 0
+                   OR json_extract(w.data, '$.mnemonics') IS NULL
+                """) ?? 0
+            // Words without 'ai_enriched' tag: scan tags array for the literal.
+            // SQLite json1 doesn't have an "array contains" so we use a LIKE
+            // on the serialized JSON — robust enough for an integer-free tag.
+            let notAI = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM word w
+                WHERE json_extract(w.data, '$.tags') IS NULL
+                   OR json_extract(w.data, '$.tags') NOT LIKE '%"ai_enriched"%'
+                """) ?? 0
+            return IntegrityReport(
+                orphanReviewCards: orphanCards,
+                orphanBookEntries: orphanEntries,
+                orphanUserContent: orphanUC,
+                wordsWithoutCard: noCard,
+                nonNewCardsWithoutLog: nonNewNoLog,
+                wordsMissingChineseDef: missingZh,
+                wordsMissingMnemonic: missingMnem,
+                wordsNotAIEnriched: notAI
+            )
+        }
+    }
+
     private static func buildSummaryQuery(
         book: String?,
         state: WordStateFilter,
@@ -442,6 +625,11 @@ nonisolated final class DatabaseService: Sendable {
         } else {
             // json_extract works on the BLOB column because GRDB stores UTF-8 JSON
             // bytes; SQLite's JSON1 parser accepts the byte sequence directly.
+            //
+            // hasUserMnemonic uses an EXISTS subquery on `user_content`. The
+            // subquery is run per-row but is index-driven (idx_user_content_word)
+            // and ~13K rows × ~zero matches is essentially free; if it ever shows
+            // up in the profile, switch to a LEFT JOIN with a GROUP BY.
             select = """
                 SELECT
                   w.id AS id,
@@ -455,7 +643,14 @@ nonisolated final class DatabaseService: Sendable {
                       AND json_array_length(json_extract(w.data, '$.mnemonics')) > 0
                     THEN 1 ELSE 0
                   END AS hasMnemonic,
-                  rc.state AS cardState
+                  EXISTS (
+                    SELECT 1 FROM user_content uc
+                    WHERE uc.wordId = w.id AND uc.type = 'mnemonic'
+                  ) AS hasUserMnemonic,
+                  rc.state AS cardState,
+                  rc.dueDate AS dueDate,
+                  rc.reps AS reps,
+                  rc.lapses AS lapses
                 """
         }
 
@@ -553,6 +748,7 @@ nonisolated final class DatabaseService: Sendable {
                       AND json_array_length(json_extract(w.data, '$.mnemonics')) > 0
                     THEN 1 ELSE 0
                   END AS hasMnemonic,
+                  EXISTS (SELECT 1 FROM user_content uc WHERE uc.wordId = w.id AND uc.type = 'mnemonic') AS hasUserMnemonic,
                   rc.state AS cardState,
                   rc.dueDate AS dueDate
                 \(from)
@@ -599,6 +795,7 @@ nonisolated final class DatabaseService: Sendable {
                       AND json_array_length(json_extract(w.data, '$.mnemonics')) > 0
                     THEN 1 ELSE 0
                   END AS hasMnemonic,
+                  EXISTS (SELECT 1 FROM user_content uc WHERE uc.wordId = w.id AND uc.type = 'mnemonic') AS hasUserMnemonic,
                   rc.state AS cardState
                 \(from)
                 WHERE rc.state = 0
@@ -722,6 +919,7 @@ nonisolated final class DatabaseService: Sendable {
                           AND json_array_length(json_extract(w.data, '$.mnemonics')) > 0
                         THEN 1 ELSE 0
                       END AS hasMnemonic,
+                      EXISTS (SELECT 1 FROM user_content uc WHERE uc.wordId = w.id AND uc.type = 'mnemonic') AS hasUserMnemonic,
                       rc.state AS cardState
                     \(from)
                     WHERE rc.state != 0 AND rc.dueDate >= ? AND rc.dueDate < ?
@@ -802,6 +1000,12 @@ nonisolated final class DatabaseService: Sendable {
         let cardState = stateRaw.flatMap { CardState(rawValue: $0) }
         let dueDate: Date? = row["dueDate"]
         let hasMnemonicRaw: Int? = row["hasMnemonic"]
+        // hasUserMnemonic / reps / lapses are optional in the row because
+        // some old SELECT statements may not include them yet — default to
+        // safe values rather than crash if a column is absent.
+        let hasUserMnemonicRaw: Int? = row["hasUserMnemonic"]
+        let reps: Int? = row["reps"]
+        let lapses: Int? = row["lapses"]
         return WordSummary(
             id: row["id"],
             spelling: row["spelling"],
@@ -810,8 +1014,11 @@ nonisolated final class DatabaseService: Sendable {
             firstDefZh: row["firstDefZh"],
             posLabel: row["posLabel"],
             hasMnemonic: (hasMnemonicRaw ?? 0) == 1,
+            hasUserMnemonic: (hasUserMnemonicRaw ?? 0) == 1,
             cardState: cardState,
-            dueDate: dueDate
+            dueDate: dueDate,
+            reps: reps,
+            lapses: lapses
         )
     }
 

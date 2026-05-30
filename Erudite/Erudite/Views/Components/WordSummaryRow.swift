@@ -18,7 +18,11 @@ struct WordSummaryRow: View {
     let summary: WordSummary
     var density: Density = .standard
     var showStateBadge: Bool = true
-    var trailingText: String? = nil   // e.g. "today", "1d late", "#235"
+    var trailingText: String? = nil   // explicit override (e.g. "today", "1d late")
+    /// When provided and `trailingText` is nil, the row auto-picks a
+    /// trailing label appropriate to the sort: due date for `.dueDate`,
+    /// "L:N" for `.lapses`. Lets list views show *why* a row is where it is.
+    var trailingForSort: WordSort? = nil
 
     enum Density {
         case standard
@@ -60,17 +64,23 @@ struct WordSummaryRow: View {
 
             Spacer(minLength: 4)
 
-            if let trailingText {
-                Text(trailingText)
+            if let label = resolvedTrailing {
+                Text(label)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
 
-            if summary.hasMnemonic {
+            if summary.hasUserMnemonic {
+                // Purple lightbulb = user has authored their own mnemonic
+                // for this word. After v3.0, builtin mnemonics are universal
+                // (~100% coverage) so they no longer have signal value as a
+                // list indicator — flip the icon to mean "this is one I've
+                // annotated myself" instead.
                 Image(systemName: "lightbulb.fill")
                     .font(.caption2)
-                    .foregroundStyle(.yellow)
+                    .foregroundStyle(.purple)
+                    .help("You've added a personal mnemonic")
             }
 
             if showStateBadge {
@@ -78,6 +88,26 @@ struct WordSummaryRow: View {
             }
         }
         .padding(.vertical, density == .compact ? 2 : 4)
+    }
+
+    private var resolvedTrailing: String? {
+        if let trailingText { return trailingText }
+        guard let sort = trailingForSort else { return nil }
+        switch sort {
+        case .dueDate:
+            if let due = summary.dueDate {
+                return DueDateFormatter.relativeLabel(for: due)
+            }
+            // No card row — show "—" so the row doesn't look broken.
+            return "—"
+        case .lapses:
+            if let l = summary.lapses, l > 0 {
+                return "L:\(l)"
+            }
+            return nil
+        case .bookOrder, .alphabetical:
+            return nil
+        }
     }
 
     // MARK: - Badges

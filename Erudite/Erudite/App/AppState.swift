@@ -112,6 +112,11 @@ final class AppState {
     private(set) var memoryStore: MemoryStore?
     private(set) var backgroundAI: BackgroundAI?
 
+    /// Persistent UI state for the Library tab. Lives at the AppState
+    /// level so switching tabs doesn't reset the loaded page, selection,
+    /// filter pickers, or split-pane width. See LibraryState.
+    let libraryState = LibraryState()
+
     func initialize() async {
         do {
             let db = try DatabaseService()

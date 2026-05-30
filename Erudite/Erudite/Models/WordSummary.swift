@@ -16,8 +16,19 @@ nonisolated struct WordSummary: Identifiable, Hashable {
     let firstDefZh: String?     // first Chinese definition (for list display)
     let posLabel: String?       // first part-of-speech ("adj", "v", ...)
     let hasMnemonic: Bool       // any builtin mnemonic available
+    /// True iff `user_content` has a row with type='mnemonic' for this word.
+    /// Drives the small purple lightbulb on list rows. After v3.0,
+    /// `hasMnemonic` (builtin) is true for ~100% of rows so it has no
+    /// discrimination value as a list signal — `hasUserMnemonic` highlights
+    /// words the user has actually annotated.
+    let hasUserMnemonic: Bool
     let cardState: CardState?   // nil if no ReviewCard exists yet
     let dueDate: Date?          // populated only when the query joins reviewCard
+    /// Total reviews (rc.reps). Populated by the standard summary SELECT;
+    /// nil only when the row was constructed by hand.
+    let reps: Int?
+    /// Lapses (rc.lapses) — times the card slipped back from review.
+    let lapses: Int?
 
     init(
         id: String,
@@ -27,8 +38,11 @@ nonisolated struct WordSummary: Identifiable, Hashable {
         firstDefZh: String? = nil,
         posLabel: String? = nil,
         hasMnemonic: Bool = false,
+        hasUserMnemonic: Bool = false,
         cardState: CardState? = nil,
-        dueDate: Date? = nil
+        dueDate: Date? = nil,
+        reps: Int? = nil,
+        lapses: Int? = nil
     ) {
         self.id = id
         self.spelling = spelling
@@ -37,8 +51,11 @@ nonisolated struct WordSummary: Identifiable, Hashable {
         self.firstDefZh = firstDefZh
         self.posLabel = posLabel
         self.hasMnemonic = hasMnemonic
+        self.hasUserMnemonic = hasUserMnemonic
         self.cardState = cardState
         self.dueDate = dueDate
+        self.reps = reps
+        self.lapses = lapses
     }
 }
 
