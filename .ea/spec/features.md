@@ -446,12 +446,12 @@ push navigation otherwise. Layout selection is automatic via `GeometryReader`.
 
 ```
 ┌── Library (wide) ───────────────────────────────────────────┐
-│ [search] [Book ▾] [Tier ▾] [State ▾] [Sort ▾]               │
+│ [search] [Book ▾] [State ▾] [Sort ▾]                        │
 │ ─────────────────────────────────────────────────────────── │
-│  ●  aberrant   /æˈber.ənt/ adj 异常的    Review   │ aberrant │
-│     coalesce   ...          v   联合     Learning │ /æˈber/  │
-│     equivocate ...          v   含糊其辞  Review  │ ━━━━━━  │
-│     garrulous  ...          adj 啰嗦的   New      │ Learning │
+│  aberrant     /æˈber.ənt/ adj 异常的    Review   │ aberrant │
+│  coalesce     ...          v   联合     Learning │ /æˈber/  │
+│  equivocate   ...          v   含糊其辞  Review  │ ━━━━━━  │
+│  garrulous    ...          adj 啰嗦的   New      │ Learning │
 │  ⋯                                                │ Progress │
 │                                                  │ ⋯        │
 │ Showing 200 of 13,422 · [Load More]              │          │
@@ -464,12 +464,23 @@ All run as SQL — never as in-memory filtering of decoded `Word` blobs.
 Backed by `WordSummary` projections; see `data.md`.
 
 - **Search** (debounced 300ms): `LIKE` on `spelling` or first Chinese def.
-- **Book filter** (active book): `INNER JOIN wordListEntry`.
-- **Tier filter**: Core / Common / Advanced.
+- **Book filter** (defaults to active study book; two-way synced with
+  `AppState.activeBookId` so Today / Plan / Library always agree on the
+  current book): `INNER JOIN wordListEntry`.
 - **State filter**: New / Learning / Review / Mature (Mature ≈ Review +
   stability ≥ 21d).
-- **Sort**: Frequency / A→Z / Due date / Most lapses.
+- **Sort**: Book Order (default when a book is selected — uses
+  `wordListEntry.sortOrder`) / A→Z / Due date / Most lapses. Without a
+  book picked, Book Order silently falls back to A→Z.
 - **Pagination**: 200/page with a Load More button (no infinite scroll).
+
+The previous **Tier filter** (Core / Common / Advanced) was removed in
+2026-05. The bundled `frequency` field had no authoritative GRE provenance
+and 80%+ of words landed in the Advanced bucket, so the picker added
+clutter without information. `Word.frequency` is still kept on the model
+for backward compat — if a real importance signal becomes available
+(per-book curation weights, corpus frequency rank), we can reintroduce a
+filter on top of it.
 
 ### Keyboard browsing (split mode)
 

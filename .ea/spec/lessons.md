@@ -381,3 +381,81 @@ automatically the moment the upstream types compiled cleanly.
 | Observability | Tracing/IDs/usage + an in-app debug panel are not optional for a self-built agent. |
 | Lifecycle triggers | Combine count thresholds with lifecycle-event flushes for unreliable "end of X" events. |
 | Concurrency | Under default-MainActor isolation, pure value types and cross-thread services must be explicitly `nonisolated`; SwiftUI errors against sibling vars are usually downstream symptoms — fix the upstream type first. |
+
+---
+
+## 2026-05-30 — Library v2 polish (post-erudite-24 followup)
+
+### `row["x"] as? Int` is a trap with GRDB / Int64
+- **Symptom:** Library's State filter "Review" returned the right rows in
+  SQL (verified with sqlite3) but every row's badge in the UI showed
+  "New". Other typed reads (UUID, String, Date) were fine.
+- **Root cause:** SQLite stores integers as `Int64`. GRDB's `Row.subscript`
+  is overloaded — `let x: Int? = row["x"]` goes through the typed-coercion
+  path that converts Int64 → Int correctly, but `row["x"] as? Int` goes
+  through `DatabaseValue` and silently returns `nil` for many values. So
+  `cardState` was being read as `nil` → falling back to `.new` on the
+  badge.
+- **Fix:** Use the typed-annotation form everywhere (`let stateRaw: Int? =
+  row["cardState"]`).
+- **Takeaway:** When using GRDB, pick the typed-annotation subscript form
+  for primitives. The `as? Int` shorthand only works coincidentally for
+  values that happen to round-trip cleanly through `DatabaseValue` —
+  trust nothing about it.
+
+### LaunchServices "process" can outlive your `kill`
+- **Symptom:** After `pkill -9` the Erudite process kept showing up in
+  `pgrep` and `open` returned `_LSOpenURLsWithCompletionHandler() failed
+  with error -1712`. New code paths I added clearly weren't running on
+  re-launch.
+- **Root cause:** `parent process: debugserver` — Xcode's LLDB had
+  attached to the app and was holding it suspended. Killing the app
+  process alone leaves the debugserver stub (and the kernel marks the
+  process state `SX`); LaunchServices then thinks the bundle is "still
+  running" and refuses to relaunch it.
+- **Fix:** `kill -9 <debugserver_pid> <erudite_pid>` (or `killall
+  debugserver`) before `open`-ing again.
+- **Takeaway:** When verifying app behavior from the CLI without going
+  through Xcode's UI, kill `debugserver` along with `Erudite`. Otherwise
+  what you see is yesterday's binary.
+
+### `INSERT OR REPLACE` would silently nuke FSRS progress
+- **Symptom:** Almost shipped a "v3.0 word data upgrade" path using
+  `INSERT OR REPLACE INTO word ...`.
+- **Why that's broken:** SQLite implements REPLACE as DELETE-then-INSERT
+  on PK conflict. `reviewCard.wordId REFERENCES word(id) ON DELETE
+  CASCADE`, so the DELETE half of REPLACE would cascade and wipe every
+  user's review history — invisibly, mid-launch.
+- **Fix:** UPDATE existing rows by `id`, INSERT only genuinely new ones.
+- **Takeaway:** When a parent table has CASCADE children, REPLACE on the
+  parent is destructive. Always reach for explicit UPDATE/INSERT-IF-NOT-
+  EXISTS for upgrade paths against tables with FK children.
+
+### Tier filter without provenance was UX clutter
+- **Symptom:** Library had a "Tier: Core / Common / Advanced" picker
+  driven by `Word.frequency`, but the bundled distribution was 524 / 1779
+  / 10838 — 83% of all words landed in "advanced" with no useful signal
+  to differentiate them.
+- **Fix:** Removed the picker, the `WordSort.frequency` option, and the
+  C/M/A circle badge from `WordSummaryRow`. Default sort is now
+  `bookOrder` (uses `wordListEntry.sortOrder` when a book is selected,
+  silently falls back to alphabetical otherwise). Kept `Word.frequency`
+  on the model so we can reintroduce a real importance signal later
+  (corpus frequency rank, per-book curation weights) without a migration.
+- **Takeaway:** A filter/sort axis is only worth surfacing if its
+  cardinality and distribution are meaningfully informative. Skewed
+  buckets are noise — delete them, don't leave them in "for completeness".
+
+### Bundled data is a moving target — version it from day one
+- **Context:** `words.json` started as v1.0 (sparse), then got
+  ai-enriched to v3.0 (mnemonics, examples, synonyms for 99% of words).
+  But `WordLoader.seedDatabaseIfNeeded()` only inserted on a fresh DB —
+  so existing installs kept the v1.0 sparse data forever; v3.0 was
+  effectively dead bytes for anyone past first launch.
+- **Fix:** Added a `meta(key, value)` table; stamp `wordsVersion` on
+  seed; on subsequent launches, if bundle version > stored version, run
+  `upsertWordData([Word])` to UPDATE existing rows' `data` BLOBs in
+  place. `reviewCard` / `reviewLog` / `user_content` are untouched.
+- **Takeaway:** Anything that ships in the app bundle but lives in a
+  user-mutable DB needs a version field on day one. Without it, every
+  bundle update is invisible to anyone who isn't doing a fresh install.
