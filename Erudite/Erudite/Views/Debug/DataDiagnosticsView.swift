@@ -45,6 +45,8 @@ struct DataDiagnosticsView: View {
                         Divider()
                         countsSection(report)
                         Divider()
+                        integritySection(report)
+                        Divider()
                         coverageSection(report)
                         if !report.bundleOnlyIds.isEmpty || !report.dbOnlyIds.isEmpty {
                             Divider()
@@ -96,6 +98,46 @@ struct DataDiagnosticsView: View {
                 kv("Shared", "\(r.sharedCount)")
                 kv("Bundle-only", "\(r.bundleOnlyIds.count)")
                 kv("DB-only", "\(r.dbOnlyIds.count)")
+            }
+        }
+    }
+
+    private func integritySection(_ r: DiagnosticsReport) -> some View {
+        let ir = r.integrity
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("DB Integrity")
+                .font(.subheadline.weight(.semibold))
+            Text("Cross-table consistency checks. \"OK\" = 0 problems; numbers = orphan/missing rows.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            integrityRow("Orphan reviewCards (no matching word)", ir.orphanReviewCards, expectsZero: true)
+            integrityRow("Orphan wordListEntry (no matching word)", ir.orphanBookEntries, expectsZero: true)
+            integrityRow("Orphan user_content (no matching word)", ir.orphanUserContent, expectsZero: true)
+            integrityRow("Words without a reviewCard", ir.wordsWithoutCard, expectsZero: true)
+            integrityRow("Non-new cards without any reviewLog", ir.nonNewCardsWithoutLog, expectsZero: false)
+            integrityRow("Words missing Chinese definition", ir.wordsMissingChineseDef, expectsZero: true)
+            integrityRow("Words missing any builtin mnemonic", ir.wordsMissingMnemonic, expectsZero: true)
+            integrityRow("Words NOT tagged ai_enriched", ir.wordsNotAIEnriched, expectsZero: false)
+        }
+    }
+
+    private func integrityRow(_ label: String, _ count: Int, expectsZero: Bool) -> some View {
+        let isProblem = expectsZero && count > 0
+        return HStack {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(isProblem ? Color.red : .secondary)
+            Spacer()
+            if count == 0 {
+                Text("OK")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.green)
+            } else {
+                Text("\(count)")
+                    .font(.system(.caption, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(isProblem ? Color.red : Color.orange)
+                    .monospacedDigit()
             }
         }
     }
@@ -203,6 +245,7 @@ nonisolated struct DiagnosticsReport: Sendable {
     let bundleOnlyIds: [String]
     let dbOnlyIds: [String]
     let fieldDeltas: [FieldDelta]
+    let integrity: DatabaseService.IntegrityReport
 }
 
 nonisolated struct FieldDelta: Sendable {
@@ -258,6 +301,7 @@ private nonisolated func buildReport(db: DatabaseService) throws -> DiagnosticsR
         sharedCount: sharedIds.count,
         bundleOnlyIds: Array(bundleIds.subtracting(dbIds)).sorted(),
         dbOnlyIds: Array(dbIds.subtracting(bundleIds)).sorted(),
-        fieldDeltas: deltas
+        fieldDeltas: deltas,
+        integrity: try db.checkIntegrity()
     )
 }
