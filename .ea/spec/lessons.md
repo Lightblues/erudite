@@ -459,3 +459,70 @@ automatically the moment the upstream types compiled cleanly.
 - **Takeaway:** Anything that ships in the app bundle but lives in a
   user-mutable DB needs a version field on day one. Without it, every
   bundle update is invisible to anyone who isn't doing a fresh install.
+
+---
+
+## 2026-05-30 (cont.) — Library v3 polish
+
+### Tab-switch resets `@State` — promote to a singleton if it must persist
+- **Symptom:** Every time the user came back to Library, the list jumped
+  back to "abacus" — losing scroll position, selection, and any "Load
+  More" they'd done.
+- **Root cause:** `LibraryView` is a SwiftUI `View` value type embedded in
+  `NavigationSplitView`'s detail column. SwiftUI rebuilds it on every tab
+  switch, which re-runs `.task` and resets every `@State` to its initial
+  value.
+- **Fix:** Promoted "live state" (loaded summaries, selection, filter
+  pickers, list-pane width) to a `LibraryState` singleton owned by
+  `AppState`. Views read it via `@Bindable var lib = appState.libraryState`.
+  Survives tab switches; selectively persists what should outlive process
+  restart (split-pane width → UserDefaults).
+- **Takeaway:** `@State` in a SwiftUI View is "view-local UI state, lifetime
+  tied to view identity." Anything that should outlive a tab switch
+  belongs in an `@Observable` object owned by the app, not the view.
+
+### A SwiftUI ForEach over `[Character]` doesn't compile
+- **Symptom:** `ForEach(letters, id: \.self) { ... }` over `[Character]`
+  errored with "no exact matches in call to initializer" / "[Character] →
+  Binding<C>" / "generic parameter 'C' could not be inferred".
+- **Cause:** Swift `Character` is `Hashable` but the SwiftUI overload
+  resolver picks the wrong initializer. Easiest fix: feed `[String]`
+  instead.
+- **Takeaway:** When `ForEach` complains, try the simplest collection
+  type that satisfies the same intent — usually `[String]`.
+
+### Color foregroundStyle ternary needs both arms typed as `Color`
+- **Symptom:** `foregroundStyle(active ? .secondary : .tertiary)` on Text
+  failed with "result values in '? :' expression have mismatching types
+  'Color' and 'some ShapeStyle'".
+- **Cause:** `.secondary` resolves to a `HierarchicalShapeStyle`,
+  `.tertiary` doesn't (or vice versa). The conditional needs both arms
+  to be the same type. `foregroundStyle` is heavily overloaded and does
+  not unify the arms.
+- **Fix:** Make both sides explicit `Color` (`Color.secondary` and
+  `Color.secondary.opacity(0.35)`).
+
+### FSRS x Unit chunking — they're orthogonal
+- **Context:** Adding "unit summary cards every N reviews" sounded like
+  it might break FSRS scheduling.
+- **Reality:** FSRS persists state inside `rate()`, before the unit
+  boundary check. The unit layer only decides *when to show a summary
+  card* — the queue, the schedule, the reviewLog are all unaffected.
+- **Takeaway:** Treat UX chunking layers as filters/dispatchers on top of
+  the underlying state machine, not as state-machine modifiers.
+  Implementation cost stayed low precisely because of this separation.
+
+### "29 missing X" in DataDiagnostics tells a real story
+- **Observation:** After v3.0 upgrade ran cleanly, the new DB integrity
+  view showed: 29 words without reviewCard, 29 missing chinese def, 29
+  missing mnemonic. Same 29 in all three columns.
+- **Explanation:** These are runtime-cached words from
+  `WordLookupService` — the user clicked an unknown word while reading
+  and the API filled in just the lookup fields (`spelling`, `phonetic`,
+  one definition), bypassing both the bundle seed *and* the
+  `createCardsForNewWords` helper. Not a regression; surfaced because
+  diagnostics are now wired up.
+- **Takeaway:** Integrity checks pay for themselves the moment you turn
+  them on. Anomalies the human can't see in the UI become obvious in
+  numbers. Even when the answer is "expected for this code path", you
+  now know the count.

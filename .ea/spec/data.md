@@ -394,6 +394,8 @@ amount of duplicated query code (one for summaries, one for full).
 | WordDetail: card + history | `fetchReviewCard(forWord:)`, `fetchReviewLogs(cardId:limit:)`, `fetchBooks(containingWord:)` |
 | User content (mnemonics today, notes next) | `addUserContent`, `updateUserContent`, `deleteUserContent`, `fetchUserContent(wordId, type?)` |
 | Schema/data versioning | `metaValue(forKey:)`, `setMetaValue(_:forKey:)`, `upsertWordData(_:)` |
+| Library jump bar | `offsetForFirstSpelling(startingWith:book:state:search:)`, `availableStartingLetters(book:state:search:)` |
+| DB integrity audit | `checkIntegrity()` returning `IntegrityReport` (orphan rows, missing fields, untagged words) — driven by `Views/Debug/DataDiagnosticsView` |
 
 > Read-row gotcha: SQLite returns integers as `Int64`. `row["x"] as? Int`
 > goes through `DatabaseValue` and silently returns `nil` for live `Int64`

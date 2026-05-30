@@ -357,8 +357,23 @@ Used by: StudyView, TypingView (any keyboard-driven view).
 
 **State Machine:**
 ```
-loading → studying ⇄ idle (Esc pauses, Space resumes) → complete
+loading → studying ⇄ idle (Esc pauses, Space resumes)
+              │
+              └→ unitComplete (every N cards)  → studying  (Continue)
+                                              ↘ complete   (Stop / queue empty)
 ```
+
+The session is sliced into **units** of `unitSize` cards (default 12,
+persisted as `study_unitSize` in UserDefaults). After every unit the view
+transitions to `.unitComplete` and shows a small summary card so the user
+gets a checkpoint instead of a 100-word death march. Mix is "reviews
+first, new last" — reviews already come ahead of new in the queue, so the
+unit boundary just slices wherever it lands.
+
+The unit layer is **purely UX**. FSRS schedules each rating immediately
+(`updateCard` + `insertReviewLog` in `rate()`), so an interrupted unit
+loses no progress — the next session continues from the next card with
+all FSRS state already up-to-date.
 
 **Header Bar:**
 - Progress: "X done · Y left" + card state badge (New/Learning/Review)
@@ -382,7 +397,8 @@ loading → studying ⇄ idle (Esc pauses, Space resumes) → complete
 | → / n | Skip to next word |
 | r | Replay pronunciation |
 | q | End session |
-| Esc | Pause → idle |
+| Esc | Pause → idle (or end session from .unitComplete) |
+| Space / Return | (in .unitComplete) Continue to next unit |
 
 **Mouse Operations:**
 - Click card → toggle reveal
@@ -390,8 +406,14 @@ loading → studying ⇄ idle (Esc pauses, Space resumes) → complete
 - Click ← / → in navigation → go back / skip
 - Click Word List → popover with full queue
 
+**Unit Complete Card:**
+- Header "Unit N complete" + "Take a breath — X cards left"
+- 4 stats: Cards / Time / Accuracy / Again count
+- Mini-grid of the unit's words colored by rating
+- [Continue] (default action — Space/Return) and [Stop] buttons
+
 **Session Complete Page:**
-- Stats: Cards studied / Duration / Again count
+- Stats: Cards studied / Duration / Again count (whole-session totals)
 - Full word list with rating color (Again=red, Hard=orange, Good=green, Easy=blue)
 - "Study More" button to start new session
 
@@ -473,6 +495,30 @@ Backed by `WordSummary` projections; see `data.md`.
   `wordListEntry.sortOrder`) / A→Z / Due date / Most lapses. Without a
   book picked, Book Order silently falls back to A→Z.
 - **Pagination**: 200/page with a Load More button (no infinite scroll).
+  An A-Z jump bar between the list and the resizable divider lets the user
+  jump-paginate to any starting letter; clicking a letter forces
+  alphabetical sort if not already and loads the page starting at the
+  computed offset. Letters with zero matches under current filters are
+  dimmed.
+
+### Resizable split + persistent state
+
+- Split layout uses **Mail-style proportions**: list defaults to 360pt
+  (draggable 280–600pt via the divider's hit-region), detail fills the
+  remainder. The list width is persisted to `UserDefaults` so it survives
+  restarts.
+- All Library "live state" (loaded summaries, pagination offset,
+  selection, filter pickers, list pane width) lives in `LibraryState`
+  (`@Observable`, owned by `AppState`). Switching tabs and coming back
+  preserves position — the user doesn't snap back to "abacus" every
+  time.
+- The list row shows context-aware trailing labels: when sorted by Due
+  Date, the trailing column shows `today` / `2d late` / `in 3d`; when
+  sorted by Most Lapses, it shows `L:N` for cards that have lapsed.
+- The lightbulb in row trailings is **purple, only when the user has
+  authored their own mnemonic** (a `user_content` row of type
+  `mnemonic`). Builtin mnemonics now have ~100% coverage so a generic
+  "has mnemonic" indicator carries no signal.
 
 The previous **Tier filter** (Core / Common / Advanced) was removed in
 2026-05. The bundled `frequency` field had no authoritative GRE provenance
