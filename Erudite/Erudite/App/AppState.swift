@@ -185,6 +185,7 @@ final class AppState {
 
 enum SidebarTab: String, CaseIterable, Identifiable {
     case today = "Today"
+    case plan = "Plan"
     case flashcard = "Flashcard"
     case typing = "Typing"
     case library = "Library"
@@ -195,6 +196,7 @@ enum SidebarTab: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .today: "house"
+        case .plan: "calendar.day.timeline.left"
         case .flashcard: "book"
         case .typing: "keyboard"
         case .library: "books.vertical"

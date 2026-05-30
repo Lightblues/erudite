@@ -118,6 +118,8 @@ struct ContentView: View {
         switch tab {
         case .today:
             TodayView()
+        case .plan:
+            PlanView()
         case .flashcard:
             StudyView()
         case .typing:

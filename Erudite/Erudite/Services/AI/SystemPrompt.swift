@@ -60,6 +60,8 @@ enum SystemPrompt {
                 contextNote = "The user is browsing their word library. You can help with word lookups and comparisons."
             case .today:
                 contextNote = "The user is on the home page. You can suggest what to study today."
+            case .plan:
+                contextNote = "The user is reviewing their study plan — upcoming workload, queue, and backlog. Help them think through pacing and priorities."
             }
             sections.append("## Current Context\n\(contextNote)")
         }
