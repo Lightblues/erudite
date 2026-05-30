@@ -274,6 +274,179 @@ nonisolated final class DatabaseService: Sendable {
         }
     }
 
+    // MARK: - WordSummary (lightweight projection for list views)
+    //
+    // Query strategy: project only the fields list rows need (id, spelling,
+    // phonetic, freq, first def, pos, hasMnemonic, cardState). All filters
+    // (book/tier/state/search) and sorts run in SQL — never load + filter in
+    // Swift over 13K Word JSON blobs.
+    //
+    // Search uses LIKE on spelling + first Chinese definition (case-insensitive).
+    // Card state comes from a LEFT JOIN on reviewCard (NULL = no card row, treat as new).
+    // Mnemonic detection uses json_array_length on the bundled mnemonics field;
+    // user-added mnemonics (future user_content table) will need an OR clause here.
+
+    func fetchWordSummaries(
+        book: String? = nil,
+        tier: FrequencyTier? = nil,
+        state: WordStateFilter = .all,
+        search: String? = nil,
+        sort: WordSort = .frequency,
+        limit: Int = 200,
+        offset: Int = 0
+    ) throws -> [WordSummary] {
+        try dbQueue.read { db in
+            let (sql, args) = Self.buildSummaryQuery(
+                book: book, tier: tier, state: state, search: search,
+                sort: sort, limit: limit, offset: offset, countOnly: false
+            )
+            let rows = try Row.fetchAll(db, sql: sql, arguments: args)
+            return rows.map { row in
+                let frequencyRaw = (row["frequency"] as? Int) ?? FrequencyTier.common.rawValue
+                let frequency = FrequencyTier(rawValue: frequencyRaw) ?? .common
+                let stateRaw = row["cardState"] as? Int
+                let cardState = stateRaw.flatMap { CardState(rawValue: $0) }
+                return WordSummary(
+                    id: row["id"],
+                    spelling: row["spelling"],
+                    phonetic: row["phonetic"],
+                    frequency: frequency,
+                    firstDefZh: row["firstDefZh"],
+                    posLabel: row["posLabel"],
+                    hasMnemonic: (row["hasMnemonic"] as? Int) == 1,
+                    cardState: cardState
+                )
+            }
+        }
+    }
+
+    func fetchWordSummaryCount(
+        book: String? = nil,
+        tier: FrequencyTier? = nil,
+        state: WordStateFilter = .all,
+        search: String? = nil
+    ) throws -> Int {
+        try dbQueue.read { db in
+            let (sql, args) = Self.buildSummaryQuery(
+                book: book, tier: tier, state: state, search: search,
+                sort: .frequency, limit: 0, offset: 0, countOnly: true
+            )
+            return try Int.fetchOne(db, sql: sql, arguments: args) ?? 0
+        }
+    }
+
+    /// Total word count in the bundled DB (book == nil → all words).
+    func fetchTotalWordCount() throws -> Int {
+        try dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM word") ?? 0
+        }
+    }
+
+    private static func buildSummaryQuery(
+        book: String?,
+        tier: FrequencyTier?,
+        state: WordStateFilter,
+        search: String?,
+        sort: WordSort,
+        limit: Int,
+        offset: Int,
+        countOnly: Bool
+    ) -> (String, StatementArguments) {
+        var args: [DatabaseValueConvertible] = []
+        var clauses: [String] = []
+
+        let select: String
+        if countOnly {
+            select = "SELECT COUNT(*)"
+        } else {
+            // json_extract works on the BLOB column because GRDB stores UTF-8 JSON
+            // bytes; SQLite's JSON1 parser accepts the byte sequence directly.
+            select = """
+                SELECT
+                  w.id AS id,
+                  w.spelling AS spelling,
+                  w.phonetic AS phonetic,
+                  w.frequency AS frequency,
+                  json_extract(w.data, '$.definitions[0].chinese') AS firstDefZh,
+                  json_extract(w.data, '$.definitions[0].partOfSpeech') AS posLabel,
+                  CASE
+                    WHEN json_extract(w.data, '$.mnemonics') IS NOT NULL
+                      AND json_array_length(json_extract(w.data, '$.mnemonics')) > 0
+                    THEN 1 ELSE 0
+                  END AS hasMnemonic,
+                  rc.state AS cardState
+                """
+        }
+
+        var from = "FROM word w LEFT JOIN reviewCard rc ON rc.wordId = w.id"
+        if let book {
+            from += " INNER JOIN wordListEntry wle ON wle.wordId = w.id AND wle.listId = ?"
+            args.append(book)
+        }
+
+        if let tier {
+            clauses.append("w.frequency = ?")
+            args.append(tier.rawValue)
+        }
+
+        switch state {
+        case .all:
+            break
+        case .new:
+            // No card row OR card.state == 0 (new)
+            clauses.append("(rc.state IS NULL OR rc.state = 0)")
+        case .learning:
+            clauses.append("rc.state IN (1, 3)")
+        case .review:
+            clauses.append("rc.state = 2")
+        case .mature:
+            // Review state with stability over 21 days — rough "mature" bucket
+            clauses.append("rc.state = 2 AND rc.stability >= 21")
+        }
+
+        if let search, !search.isEmpty {
+            let pattern = "%\(search)%"
+            clauses.append("""
+                (w.spelling LIKE ? OR json_extract(w.data, '$.definitions[0].chinese') LIKE ?)
+                """)
+            args.append(pattern)
+            args.append(pattern)
+        }
+
+        let whereClause = clauses.isEmpty ? "" : "WHERE " + clauses.joined(separator: " AND ")
+
+        let orderBy: String
+        if countOnly {
+            orderBy = ""
+        } else {
+            switch sort {
+            case .frequency:
+                orderBy = "ORDER BY w.frequency, w.spelling COLLATE NOCASE"
+            case .alphabetical:
+                orderBy = "ORDER BY w.spelling COLLATE NOCASE"
+            case .dueDate:
+                // NULL dueDate (new cards / no card) sorts last; among non-null, soonest first
+                orderBy = "ORDER BY (rc.dueDate IS NULL), rc.dueDate ASC, w.spelling COLLATE NOCASE"
+            case .lapses:
+                orderBy = "ORDER BY (rc.lapses IS NULL), rc.lapses DESC, w.spelling COLLATE NOCASE"
+            }
+        }
+
+        let limitClause: String
+        if countOnly {
+            limitClause = ""
+        } else {
+            limitClause = "LIMIT ? OFFSET ?"
+            args.append(limit)
+            args.append(offset)
+        }
+
+        let sql = [select, from, whereClause, orderBy, limitClause]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return (sql, StatementArguments(args))
+    }
+
     func fetchWord(bySpelling spelling: String) throws -> Word? {
         let decoder = JSONDecoder()
         return try dbQueue.read { db in
