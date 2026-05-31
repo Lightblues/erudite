@@ -575,3 +575,58 @@ automatically the moment the upstream types compiled cleanly.
   conservative gates. The user thinks "I just typed it!" but the
   scheduler is reasoning over a longer time horizon — let the
   scheduler win when they disagree.
+
+---
+
+## 2026-05-31 (cont.) — Unifying study surfaces
+
+### Two completion screens × two view models = four bespoke layouts
+- **Symptom:** Flashcard had `.complete` (party popper, "Study More")
+  AND `.unitComplete` (compact mid-session card). Typing had its own
+  `chapterCompleteView` (WPM, accuracy bars, errors-first list). All
+  three answered the same question — "this session is over, here's
+  how you did" — with three different vocabularies and field names.
+- **Fix:** Unified shape `SessionResult { mode, unit, entries[],
+  durationSeconds, wpm }` with computed aggregates (`accuracy`,
+  `againCount`, `sortedEntries`). Single view `SessionSummaryView`
+  consumes it, with `Action` callbacks letting each call site decide
+  what Continue/Stop/Done mean. Three previously-independent
+  ~50-line summary views collapse to one.
+- **Takeaway:** When several views render a slightly-different
+  summary of the same activity, find the smallest shape that
+  describes ALL of them and converge on it. Typed protocol-of-shapes
+  beats parallel inheritance hierarchies.
+
+### Today's two responsibilities don't belong together
+- **Symptom:** I had merged FSRS-driven review units, FSRS-driven
+  new-words units, AND book chapter shortcuts under one "Today's
+  plan" header. Users got three semantically different things in
+  one list — system-decided homework next to user-driven exploration.
+- **Fix:** "Today's plan" → "Today's homework" (FSRS-only).
+  Book Chapter browsing moved out of Today entirely, into Library
+  under a new Words/Chapters segmented control.
+- **Takeaway:** "What does the system want me to do today" and
+  "what do I want to explore in this book" are different mental
+  models. Don't crowd them into one list.
+
+### Tab landing without state should pick, not default
+- **Symptom:** Clicking the Flashcard tab without first picking a
+  unit on Today silently ran the legacy `start(database:mode:.mixed)`
+  path — different cards from what Today preview showed, no scoping,
+  no explicit choice. Same for Typing.
+- **Fix:** When `currentUnit == nil`, both Flashcard and Typing render
+  `UnitPickerView` instead of running the legacy path. The user sees
+  the SAME unit list as Today and picks one explicitly. Standalone
+  chapter-by-chapter browsing moved to Library.
+- **Takeaway:** Defaulting to "do something automatically" is a
+  failure of explicitness. Every entry path should land on a
+  visible choice if context is missing.
+
+### "Today's recap" was the simplest big win
+- **Observation:** Adding a list of "words you touched today"
+  (review ratings + typing completions, sorted worst-first) was
+  ~50 lines of SQL and ~80 lines of view, and it instantly made
+  Today feel like a learning *journal* instead of just a launchpad.
+- **Takeaway:** Reflection surfaces are cheap and high-value.
+  Whenever the data exists (we already had reviewLog + typingLog),
+  showing it back to the user is almost always worth the work.

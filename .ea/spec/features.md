@@ -2,8 +2,17 @@
 
 ## 1. Today / Home
 
-The entry point when opening the app. Shows progress at a glance plus the
-list of **study units** the user can pick from today — never just counts.
+The entry point when opening the app. Two responsibilities, kept separate:
+
+1. **Today's homework** — FSRS-driven units the system says you need
+   today (Reviews · 1 / 2 / N + an optional New words unit).
+2. **Today's recap** — a journal of words touched today (Flashcard
+   ratings + Typing completions), sorted "needs another look" first.
+
+The two-column Reviews/New preview lives below for browse-without-
+committing. **Book chapter browsing has moved to Library** (Words ↔
+Chapters segmented control) — Today no longer mixes "what the system
+wants" with "what you might explore".
 
 ### Layout (current)
 
