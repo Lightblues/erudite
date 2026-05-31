@@ -60,31 +60,31 @@ nonisolated struct WordSummary: Identifiable, Hashable {
 }
 
 // MARK: - Sort
+//
+// `bookOrder` is only meaningful when a Book is selected (uses
+// wordListEntry.sortOrder to honor the book's curated order — e.g.
+// GRE 3000's chapter-by-chapter sequence). When no Book is picked,
+// the SQL builder silently falls back to alphabetical so it never
+// produces nonsense.
+//
+// History (lessons we kept):
+// - `frequency` was removed in 2026-05: bundled tier had no
+//   authoritative GRE provenance and 80% of rows landed in tier 3.
+// - `dueDate` and `lapses` were removed in 2026-05 (erudite-31):
+//   both are now better answered elsewhere — Plan's Today/Tomorrow
+//   tabs surface dueDate, and Today's recap surfaces lapses-equivalent
+//   "needs work" via Again/Hard/mistakes. Library's job is to be the
+//   browse-the-words tab; "what should I work on" lives where it
+//   belongs.
 
-/// Sort options exposed in the Library picker.
-///
-/// `bookOrder` is only meaningful when a Book is selected (uses
-/// wordListEntry.sortOrder to honor the book's curated order — e.g. GRE 3000's
-/// chapter-by-chapter sequence). When no Book is picked, the SQL builder
-/// silently falls back to alphabetical so it never produces nonsense.
-///
-/// `frequency` was removed in 2026-05: the bundled tier (1/2/3) was a coarse
-/// 524 / 1779 / 10838 split with no authoritative GRE provenance, and 80% of
-/// the rows landed in tier 3 — so the sort was effectively alphabetical for
-/// the long tail. If we want a real importance signal in the future, plug in
-/// a frequency-rank column or a per-book "weight".
 nonisolated enum WordSort: String, CaseIterable, Hashable {
     case bookOrder       // wordListEntry.sortOrder (book selected) → alphabetical fallback
     case alphabetical
-    case dueDate         // soonest due first (review cards)
-    case lapses          // most lapses first
 
     var label: String {
         switch self {
         case .bookOrder: "Book Order"
         case .alphabetical: "A → Z"
-        case .dueDate: "Due Date"
-        case .lapses: "Most Lapses"
         }
     }
 }

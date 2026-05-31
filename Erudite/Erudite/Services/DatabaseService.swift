@@ -359,6 +359,62 @@ nonisolated final class DatabaseService: Sendable {
         }
     }
 
+    // MARK: - Unit ranges (for Library's Unit picker)
+    //
+    // A "unit" is a fixed-size slice of a book's words in sortOrder.
+    // The Library UI exposes this as a picker — selecting Unit N
+    // filters the word list to that slice. The picker's labels
+    // ("Unit 5 (efflorescent — embellish)") need each unit's first
+    // and last spelling, so we hand them back here in one query.
+
+    nonisolated struct UnitRange: Sendable, Hashable, Identifiable {
+        let index: Int             // 0-based
+        let firstSpelling: String
+        let lastSpelling: String
+        let count: Int             // usually equals unitSize; final unit may be smaller
+
+        var id: Int { index }
+
+        /// 1-based human label, e.g. "Unit 1".
+        var label: String { "Unit \(index + 1)" }
+
+        /// Range string for picker display: "aback – apparel".
+        var rangeText: String { "\(firstSpelling) – \(lastSpelling)" }
+    }
+
+    func fetchUnitRanges(bookId: String, unitSize: Int) throws -> [UnitRange] {
+        guard unitSize > 0 else { return [] }
+        return try dbQueue.read { db in
+            // Pull the whole book's spellings in sortOrder, then chunk.
+            // 13K rows × one column = a few hundred KB; cheaper than N
+            // separate window-function queries against SQLite without
+            // ROW_NUMBER support pre-3.25 (which we have, but the chunk
+            // pass in Swift is clearer).
+            let spellings = try String.fetchAll(db, sql: """
+                SELECT w.spelling FROM word w
+                JOIN wordListEntry wle ON wle.wordId = w.id
+                WHERE wle.listId = ?
+                ORDER BY wle.sortOrder
+                """, arguments: [bookId])
+            guard !spellings.isEmpty else { return [] }
+            var result: [UnitRange] = []
+            var i = 0
+            var idx = 0
+            while i < spellings.count {
+                let end = Swift.min(i + unitSize, spellings.count)
+                result.append(UnitRange(
+                    index: idx,
+                    firstSpelling: spellings[i],
+                    lastSpelling: spellings[end - 1],
+                    count: end - i
+                ))
+                idx += 1
+                i = end
+            }
+            return result
+        }
+    }
+
     func fetchWord(id: String) throws -> Word? {
         let decoder = JSONDecoder()
         return try dbQueue.read { db in
@@ -387,7 +443,7 @@ nonisolated final class DatabaseService: Sendable {
         state: WordStateFilter = .all,
         search: String? = nil,
         sort: WordSort = .bookOrder,
-        limit: Int = 200,
+        limit: Int? = nil,
         offset: Int = 0
     ) throws -> [WordSummary] {
         try dbQueue.read { db in
@@ -408,7 +464,7 @@ nonisolated final class DatabaseService: Sendable {
         try dbQueue.read { db in
             let (sql, args) = Self.buildSummaryQuery(
                 book: book, state: state, search: search,
-                sort: .alphabetical, limit: 0, offset: 0, countOnly: true
+                sort: .alphabetical, limit: nil, offset: 0, countOnly: true
             )
             return try Int.fetchOne(db, sql: sql, arguments: args) ?? 0
         }
@@ -609,7 +665,7 @@ nonisolated final class DatabaseService: Sendable {
         state: WordStateFilter,
         search: String?,
         sort: WordSort,
-        limit: Int,
+        limit: Int?,
         offset: Int,
         countOnly: Bool
     ) -> (String, StatementArguments) {
@@ -700,21 +756,22 @@ nonisolated final class DatabaseService: Sendable {
                 }
             case .alphabetical:
                 orderBy = "ORDER BY w.spelling COLLATE NOCASE"
-            case .dueDate:
-                // NULL dueDate (new cards / no card) sorts last; among non-null, soonest first
-                orderBy = "ORDER BY (rc.dueDate IS NULL), rc.dueDate ASC, w.spelling COLLATE NOCASE"
-            case .lapses:
-                orderBy = "ORDER BY (rc.lapses IS NULL), rc.lapses DESC, w.spelling COLLATE NOCASE"
             }
         }
 
+        // limit: Int? = nil → no LIMIT clause at all (full set). Library
+        // now reads the entire matching slice in one go and lets SwiftUI
+        // List recycle rows lazily; pagination + jump-bar were two
+        // overlapping "position" mental models. See erudite-31.
         let limitClause: String
         if countOnly {
             limitClause = ""
-        } else {
+        } else if let limit {
             limitClause = "LIMIT ? OFFSET ?"
             args.append(limit)
             args.append(offset)
+        } else {
+            limitClause = ""
         }
 
         let sql = [select, from, whereClause, orderBy, limitClause]

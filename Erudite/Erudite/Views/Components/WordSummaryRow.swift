@@ -94,17 +94,6 @@ struct WordSummaryRow: View {
         if let trailingText { return trailingText }
         guard let sort = trailingForSort else { return nil }
         switch sort {
-        case .dueDate:
-            if let due = summary.dueDate {
-                return DueDateFormatter.relativeLabel(for: due)
-            }
-            // No card row — show "—" so the row doesn't look broken.
-            return "—"
-        case .lapses:
-            if let l = summary.lapses, l > 0 {
-                return "L:\(l)"
-            }
-            return nil
         case .bookOrder, .alphabetical:
             return nil
         }
