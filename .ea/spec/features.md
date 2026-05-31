@@ -8,9 +8,13 @@ The entry point when opening the app. Two responsibilities, kept separate:
    today (Reviews · 1 / 2 / N + an optional New words unit).
 2. **Today's recap** — a journal of words touched today (Flashcard
    ratings + Typing completions), sorted "needs another look" first.
+   Doubles as an **operation panel**: each row has a checkbox and the
+   bottom CTA `[Re-review · K]` materializes the selection into a
+   `.recap`-kind StudyUnit (practice mode — does NOT write back to FSRS).
 
-The two-column Reviews/New preview lives below for browse-without-
-committing. **Book chapter browsing has moved to Library** (Words ↔
+**What's NOT on Today**: future-due words and the new-word queue. Those
+overlap Plan and used to push recap below the fold; both now live on
+Plan as tabs. **Book chapter browsing has moved to Library** (Words ↔
 Chapters segmented control) — Today no longer mixes "what the system
 wants" with "what you might explore".
 
@@ -25,40 +29,52 @@ wants" with "what you might explore".
 │  ✓ Learned 234   ↻ Due 12   + Remaining 266                │
 │  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 47%               │
 │                                                             │
-│  Today's plan                          4 units · ~22 min    │
+│  Today's homework                      4 units · ~22 min    │
 │  ┌────────────────────────────────────────┐                 │
 │  │ ↻ Reviews · 1     12 cards · ~5 min  ›│                 │
 │  │ ↻ Reviews · 2     12 cards · ~5 min  ›│                 │
 │  │ ↻ Reviews · 3      9 cards · ~4 min  ›│                 │
 │  │ + New words       12 cards · ~6 min  ›│                 │
-│  │ 📕 GRE 3000 · Unit 1                  ›│  ← optional     │
 │  └────────────────────────────────────────┘                 │
 │  ─────────────────────────────────────────────────────────  │
 │                                                             │
-│  ┌─ Reviews (12) ───────────┐  ┌─ New (10) ──────────────┐ │
-│  │ aberrant     1d late      │  │ obstreperous            │ │
-│  │ coalesce     today        │  │ perfidious              │ │
-│  │ equivocate   today        │  │ quintessence            │ │
-│  │ ⋯ scroll for more        │  │ ⋯ scroll for more       │ │
-│  └──────────────────────────┘  └─────────────────────────┘ │
+│  Today's recap                          4 / 8 selected      │
+│  ┌────────────────────────────────────────────────────────┐│
+│  │ ☑  [Again]   sycophant   阿谀奉承的人               × 2 ││
+│  │ ☑  [Hard ]   ephemeral   短暂的                        ││
+│  │ ☑  [3 miss]  bucolic     田园的                        ││
+│  │ ☑  [Hard ]   torpor      迟钝                          ││
+│  │ ☐  [Good ]   plethora    过多                          ││
+│  │ ☐  [Easy ]   austere     朴素的                        ││
+│  │ ☐  [Typed]   nadir       最低点                        ││
+│  │ ☐  [Good ]   apex        顶峰                          ││
+│  └────────────────────────────────────────────────────────┘│
+│  [Select needsWork (4)]              [↺ Re-review · 4]      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-- **Today's plan** lists pre-built `StudyUnit` objects from
+- **Today's homework** lists pre-built `StudyUnit` objects from
   `StudyQueueBuilder.buildTodayUnits()`: due cards sliced into
-  `unitSize`-card chunks, plus an optional New Words unit (cap = unitSize),
-  plus an optional Book Chapter shortcut from the active book. Tapping a
-  row opens `UnitPreviewView` (sheet) — the user scans the words for ~30s,
-  then picks **Flashcard** or **Typing** to consume the unit. Both paths
-  consume the same pre-resolved cards/words; only the interaction differs.
-- **Two-column preview** (Reviews / New) below: each row shows spelling +
-  POS + first Chinese def. Reviews rows include a relative due-date label
-  computed at local-day boundaries (`today` / `1d late` / `in 2d`).
-- **Tapping a row** opens a `WordPopoverView` for a quick peek.
-- **Empty columns** show inline "No reviews due" / "No new words queued"
-  instead of a separate banner.
-- Rows render from lightweight `WordSummary` projections (no full-word
-  JSON decoded for the list). See `data.md` for the projection model.
+  `unitSize`-card chunks, plus an optional New Words unit (cap = unitSize).
+  Tapping a row opens `UnitPreviewView` (sheet) — the user scans the
+  words for ~30s, then picks **Flashcard** or **Typing** to consume the
+  unit. Both paths consume the same pre-resolved cards/words; only the
+  interaction differs.
+- **Today's recap** lists words touched today (Flashcard rating + Typing
+  completion), sorted by `pressingScore` (Again > Hard > many-mistakes >
+  Good > Easy). Each row carries:
+  - Checkbox, default-checked for `needsWork` rows (Again / Hard /
+    mistakes>0). User can untick or tick freely.
+  - Pressing-signal badge (Again / Hard / N miss / Good / Easy / Typed)
+  - Spelling + first Chinese def + attempt count if > 1
+  - Tapping the row body opens a `WordPopoverView` for a quick peek.
+- **Bottom CTA**: `[Re-review · K]` materializes the selected entries
+  via `StudyQueueBuilder.buildRecapUnit` into a `.recap`-kind unit and
+  opens UnitPreview. Sessions started this way do NOT write back to
+  FSRS — recap is "practice mode," not a re-rating. Disabled at K = 0.
+- **`[Select needsWork]`** secondary appears only when the current
+  selection differs from the default (handles "I cleared everything;
+  put it back").
 
 ### Unit Preview (sheet)
 
@@ -93,34 +109,38 @@ just "back to preview, pick the other one."
 
 ## 1b. Plan
 
-A second top-level tab dedicated to *future* work. Today is "what now?";
-Plan is "what's coming?"
+The "what's coming?" tab. Today answers "what now?"; Plan shows the
+schedule across time + the new-word queue. Two regions:
 
-### Layout (four sections, top → bottom)
+1. **Top (fixed)** — Roadmap card + 7-Day Workload chart. Always visible.
+2. **Bottom (tab-segmented)** — `[Today][Tomorrow][This Week][Later][New]`
+   with a count chip per tab. Each tab's word list scrolls full-height
+   below the bar.
+
+The previous layout stacked all four sections in one ScrollView; getting
+to "Tomorrow" required scrolling past the chart every time. Tabs keep
+the overview visible and let each bucket render in its own viewport.
+
+### Layout
 
 ```
 ┌── Plan ────────────────────────────────────────────────────┐
 │  Roadmap                                                    │
 │  GRE Core 500 ━━━━━━━━━━━━●━━━━━━━━━━━━━ 234/500 (47%)     │
 │  At 10 new/day, ETA ~27 days.                               │
-│  Estimate varies with review accuracy.                      │
 │                                                             │
 │  7-Day Workload                                             │
 │   30 ┤                                                      │
 │   20 ┤   ▆▆                                                 │
 │   10 ┤▄▄ ▆▆ ▆▆ ▅▅ ▃▃ ▂▂ ▂▂                                  │
 │      └─Mon Tue Wed Thu Fri Sat Sun                          │
-│                                                             │
-│  New Words Queue (next 50)                                  │
-│   235  obstreperous   adj 吵闹的                             │
-│   236  perfidious     adj 背信弃义的                         │
-│   ⋯                                                          │
-│                                                             │
-│  Due Backlog                                                │
-│   ▾ Today (12)        aberrant  coalesce  …                 │
-│   ▸ Tomorrow (8)                                            │
-│   ▸ This week (45)                                          │
-│   ▸ Later (203)                                             │
+│  ─────────────────────────────────────────────────────────  │
+│  [Today · 18][Tomorrow · 24][This week · 92][Later · 145][New · 50] │
+│  ─────────────────────────────────────────────────────────  │
+│  ⚠  aberrant      adj 异常的           (overdue)             │
+│     coalesce      v   联合                                   │
+│     equivocate    v   含糊                                   │
+│     ⋯ scrolls full-height                                    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -132,17 +152,24 @@ Plan is "what's coming?"
 - Swift Charts `BarMark` of upcoming due-card load per day.
 - Snapshot disclaimer below — every rating shifts future dates.
 
-### New Words Queue
-- Next 50 words by book sortOrder. Click to push the full WordDetailView.
+### Worklist tabs
 
-### Due Backlog
-- DisclosureGroups for `Overdue` / `Today` / `Tomorrow` / `This week` /
-  `Later` (next 30 days). Each shows a per-bucket count and expands to
-  show up to 30 words; "and N more" appears when the cap is hit.
+| Tab | Contents | Tint |
+|-----|----------|------|
+| Today | `DueBucket.overdue + .today` merged. Overdue rows flagged inline with red marker. | orange |
+| Tomorrow | `DueBucket.tomorrow` | yellow |
+| This week | `DueBucket.thisWeek` (days 2..6) | green |
+| Later | `DueBucket.later` (day 7+, capped 30) | gray |
+| New | Next 50 words by book sortOrder (was the standalone "New Words Queue" section) | blue |
+
+Each tab's count chip renders in its tint color; the active tab's chip
+fills (white text on tint), inactive chips are gray. Empty states give
+specific copy ("Tomorrow is open" / "Nothing scheduled for next week")
+instead of one generic line.
 
 ### Note: "All Books" mode
-- When no active book is selected, Roadmap hides itself; Workload / Queue /
-  Backlog show global counts.
+- When no active book is selected, Roadmap hides itself; Workload + tab
+  lists show global counts.
 
 ---
 

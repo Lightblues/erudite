@@ -630,3 +630,51 @@ automatically the moment the upstream types compiled cleanly.
 - **Takeaway:** Reflection surfaces are cheap and high-value.
   Whenever the data exists (we already had reviewLog + typingLog),
   showing it back to the user is almost always worth the work.
+
+### Read-only surfaces eventually want to be operation panels
+- **Symptom:** Today's recap (added in erudite-28) showed "what
+  you touched today" beautifully, but the natural follow-up —
+  "let me re-drill the ones I missed" — required no UI path.
+  Users were stuck looking at the data.
+- **Fix:** Added a checkbox per row (default-checked for the
+  `needsWork` subset: Again / Hard / typing-mistakes>0) and a
+  bottom CTA `[Re-review · K]` that materializes the selection
+  into a `.recap`-kind StudyUnit. The same UnitPreview pipeline
+  consumes it; the engine has a `skipsFSRSWriteback` gate so
+  recap ratings don't disturb the schedule.
+- **Takeaway:** When you build a "look at this" surface, ask
+  yourself: would the user want to *act on* what they're looking
+  at? A checkbox column + one CTA is often enough. The
+  `Kind.recap` + `skipsFSRSWriteback` combination shows the
+  pattern: rather than a parallel "practice" code path, extend
+  the existing pipeline with one opt-out flag.
+
+### Today and Plan have separable mental models — keep them apart
+- **Symptom:** Today had a two-column "Reviews | New" preview
+  that listed the next 50 due + next 50 new words. Plan had a
+  "New Words Queue" + "Due Backlog" doing the same job. Two
+  surfaces showing the same data with slightly different shapes.
+- **Fix:** Removed the preview from Today entirely. Today is now
+  *only* "today" (homework + recap). Plan is *only* "节奏" (overview
+  + future work). The split clarifies both.
+- **Takeaway:** When two surfaces overlap, ask which mental model
+  each one *uniquely* answers. If they answer the same thing,
+  one of them is dead weight. Today = "what now?" Plan = "what's
+  coming?" — distinct enough that neither can stand for the other.
+
+### Tab-segment beats one-scroll for divergent worklists
+- **Symptom:** Plan had four sections (Roadmap, Workload chart,
+  New Queue, Due Backlog with disclosure tree) stacked in one
+  ScrollView. Getting to "Tomorrow" required scrolling past the
+  chart every time. The disclosure tree's `▸ Today (12)` /
+  `▸ Tomorrow (8)` rows asked the user to expand-the-thing-they
+  -wanted before they could see it.
+- **Fix:** Split Plan into a fixed top region (Roadmap + Chart)
+  and a tab-segmented bottom (`[Today][Tomorrow][This Week]
+  [Later][New]`, count chip per tab). Each tab's word list
+  scrolls full-height in its own viewport.
+- **Takeaway:** When a page has an "always-relevant overview"
+  + "pick-one worklist" structure, tabs beat stacked sections.
+  The overview anchors the page; tabs let each list breathe.
+  Disclosure groups felt natural for nested data but added a
+  click for the most common reads.
