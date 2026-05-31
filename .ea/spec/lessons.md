@@ -678,3 +678,53 @@ automatically the moment the upstream types compiled cleanly.
   The overview anchors the page; tabs let each list breathe.
   Disclosure groups felt natural for nested data but added a
   click for the most common reads.
+
+### Fixed regions only earn their pin if always-actionable
+- **Symptom:** erudite-29 split Plan into a fixed top (Roadmap +
+  7-Day Workload chart) and a scrolling bottom (tab worklist).
+  The reasoning was "the overview is always relevant." It wasn't.
+  Users glanced at the chart once per visit, then wanted the
+  worklist to take the full viewport — the chart became a
+  permanent screen-real-estate tax.
+- **Fix:** Reverted to one ScrollView. Roadmap + Chart + Tab Bar
+  + Worklist all scroll together. The user can scroll the
+  chart out of the way when they want to focus on a bucket.
+- **Takeaway:** Fixed regions only earn their pin if they're
+  *always actionable* (a search bar, a primary CTA, a tab
+  selector). "Always relevant for context" is not the same as
+  "always actionable" — preview-y data should scroll like the
+  rest of the page. When in doubt, default to single-scroll
+  and let the user's gesture decide what to focus on.
+
+### Sessions don't need start/end rows — gap-cluster timestamps
+- **Need:** Today's activity strip wanted "how many Flashcard /
+  Typing sessions today." We didn't already have session-bracket
+  rows in the schema; reviewLog and typingLog only carry
+  per-event timestamps.
+- **Fix:** `clusterCount(times, gap: 30 * 60)` — sort timestamps,
+  count "gaps ≥ 30 min" as session boundaries. Empty list = 0,
+  single timestamp = 1, two events 5 min apart = 1 session, two
+  events 45 min apart = 2 sessions.
+- **Takeaway:** Don't add a `session` table just to count
+  sessions. The data already implies the boundary; you just
+  need to surface it. The 30-min gap is empirical — shorter
+  than a typical "I'll practice for a bit" arc, longer than
+  a quick mode-switch. Worth re-tuning later from real
+  usage data, but a single number in one place is easy to
+  iterate on.
+
+### Data API surface owns the semantics; views just render
+- **Pattern:** When designing `fetchTodayActivityStats`, the
+  question wasn't "how do I query reviewLog from the view" but
+  "what 4 numbers does Today need, and how do they all derive
+  from the existing log tables?" The cluster-gap, the
+  `state == 0` detection for new-word bootstrap, the
+  "distinct wordIds" rule — every semantic decision lives in
+  the API. The view receives a `TodayActivityStats` value and
+  draws four chips.
+- **Takeaway:** When CLAUDE.md says "data layer does the API,
+  UI displays" — the test is: could you swap the view for an
+  AppleScript dump and still understand "what happened today"
+  from the API alone? If yes, the boundary is right. If the
+  view has to compose two API calls or apply business rules to
+  display a number, the API is too thin.

@@ -2,11 +2,14 @@
 
 ## 1. Today / Home
 
-The entry point when opening the app. Two responsibilities, kept separate:
+The entry point when opening the app. Three responsibilities, kept separate:
 
-1. **Today's homework** — FSRS-driven units the system says you need
+1. **Today's activity** — inline strip showing what's been done today
+   (flashcard sessions, typing sessions, words reviewed, new words
+   learned). Hidden on a 0-everything day.
+2. **Today's homework** — FSRS-driven units the system says you need
    today (Reviews · 1 / 2 / N + an optional New words unit).
-2. **Today's recap** — a journal of words touched today (Flashcard
+3. **Today's recap** — a journal of words touched today (Flashcard
    ratings + Typing completions), sorted "needs another look" first.
    Doubles as an **operation panel**: each row has a checkbox and the
    bottom CTA `[Re-review · K]` materializes the selection into a
@@ -28,6 +31,9 @@ wants" with "what you might explore".
 │  📕 GRE Core 500 ▼                                          │
 │  ✓ Learned 234   ↻ Due 12   + Remaining 266                │
 │  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 47%               │
+│                                                             │
+│  Today's activity                                           │
+│  ▭ 3 Flashcards  ⌨ 1 Typing  │  ↻ 47 Reviewed  + 5 New     │
 │                                                             │
 │  Today's homework                      4 units · ~22 min    │
 │  ┌────────────────────────────────────────┐                 │
@@ -60,6 +66,18 @@ wants" with "what you might explore".
   words for ~30s, then picks **Flashcard** or **Typing** to consume the
   unit. Both paths consume the same pre-resolved cards/words; only the
   interaction differs.
+- **Today's activity** strip — sourced from
+  `DatabaseService.fetchTodayActivityStats()`. Four numbers since
+  local-day start:
+    - `flashcardSessions` / `typingSessions` — gap-clustered with a
+      30-min threshold (events less than 30 min apart belong to the
+      same session). No explicit session start/end rows in the DB.
+    - `wordsReviewed` — distinct wordIds rated today (any rating).
+    - `newWordsLearned` — distinct wordIds whose rating today was
+      given on a `.new`-state card (reviewLog.state == 0 → bootstrap
+      rating, the moment we count the word as introduced).
+  All aggregation lives in the data API; the view chip strip is purely
+  presentational. Hidden when all four numbers are 0.
 - **Today's recap** lists words touched today (Flashcard rating + Typing
   completion), sorted by `pressingScore` (Again > Hard > many-mistakes >
   Good > Easy). Each row carries:
@@ -110,16 +128,17 @@ just "back to preview, pick the other one."
 ## 1b. Plan
 
 The "what's coming?" tab. Today answers "what now?"; Plan shows the
-schedule across time + the new-word queue. Two regions:
+schedule across time + the new-word queue. **Single ScrollView**:
+Roadmap + 7-Day Workload chart + tab bar + worklist all scroll
+together. The user can scroll the chart out of the way and let the
+worklist take the full viewport — the chart is a once-per-visit
+preview, not a perpetual control, so pinning it at the top wastes
+screen real estate when the worklist is the actual destination.
 
-1. **Top (fixed)** — Roadmap card + 7-Day Workload chart. Always visible.
-2. **Bottom (tab-segmented)** — `[Today][Tomorrow][This Week][Later][New]`
-   with a count chip per tab. Each tab's word list scrolls full-height
-   below the bar.
-
-The previous layout stacked all four sections in one ScrollView; getting
-to "Tomorrow" required scrolling past the chart every time. Tabs keep
-the overview visible and let each bucket render in its own viewport.
+The worklist itself is **tab-segmented**:
+`[Today][Tomorrow][This Week][Later][New]` with a colored count
+chip per tab. One tab visible at a time so the user focuses on the
+bucket they actually want, instead of disclosure-tree clicking.
 
 ### Layout
 
