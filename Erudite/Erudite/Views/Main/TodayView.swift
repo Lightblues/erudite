@@ -24,6 +24,7 @@ struct TodayView: View {
 
     @State private var todayUnits: [StudyUnit] = []
     @State private var recapEntries: [DatabaseService.RecapEntry] = []
+    @State private var activityStats: DatabaseService.TodayActivityStats?
     /// wordIds the user has selected for re-review. Initialized to the
     /// `needsWork` subset on each reload; the user can toggle individual
     /// rows or hit [Select needsWork] to reset.
@@ -45,6 +46,10 @@ struct TodayView: View {
 
                 if let book = appState.activeBook {
                     bookProgress(book: book)
+                }
+
+                if let stats = activityStats, !stats.isEmpty {
+                    activityStrip(stats)
                 }
 
                 homeworkSection
@@ -184,6 +189,84 @@ struct TodayView: View {
         .frame(maxWidth: 480)
     }
 
+    // MARK: - Today's activity (inline strip)
+    //
+    // "What did I do today?" — counts sourced from
+    // DatabaseService.fetchTodayActivityStats so the data layer owns
+    // all the logic (session gap clustering, distinct-word counting,
+    // new-word detection via reviewLog.state == 0). UI is purely
+    // presentational.
+    //
+    // Hidden when the day's activity is all-zero (TodayActivityStats.isEmpty).
+
+    @ViewBuilder
+    private func activityStrip(_ s: DatabaseService.TodayActivityStats) -> some View {
+        let sessions = s.flashcardSessions + s.typingSessions
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Today's activity")
+                    .font(.headline)
+                Spacer()
+            }
+            HStack(spacing: 18) {
+                activityChip(
+                    icon: "rectangle.on.rectangle",
+                    color: .purple,
+                    value: s.flashcardSessions,
+                    label: s.flashcardSessions == 1 ? "Flashcard" : "Flashcards"
+                )
+                activityChip(
+                    icon: "keyboard",
+                    color: .indigo,
+                    value: s.typingSessions,
+                    label: s.typingSessions == 1 ? "Typing" : "Typings"
+                )
+                Divider().frame(height: 24)
+                activityChip(
+                    icon: "arrow.clockwise",
+                    color: .orange,
+                    value: s.wordsReviewed,
+                    label: "Reviewed"
+                )
+                activityChip(
+                    icon: "plus.circle",
+                    color: .blue,
+                    value: s.newWordsLearned,
+                    label: "New"
+                )
+                Spacer()
+                if sessions > 0 {
+                    Text("\(sessions) session\(sessions == 1 ? "" : "s")")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(.quaternary, lineWidth: 0.5)
+            )
+        }
+        .frame(maxWidth: 640)
+    }
+
+    private func activityChip(icon: String, color: Color, value: Int, label: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .foregroundStyle(value > 0 ? color : Color.secondary.opacity(0.6))
+                .font(.subheadline)
+            Text("\(value)")
+                .font(.subheadline.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(value > 0 ? .primary : .secondary)
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
     // MARK: - Today's homework (FSRS-driven only)
     //
     // The list of FSRS-driven study units the user can pick from today.
@@ -319,11 +402,14 @@ struct TodayView: View {
             // Default selection: the needsWork subset — the user can
             // still uncheck rows or [Select needsWork] to reset.
             self.recapSelection = Set(entries.filter(\.needsWork).map(\.wordId))
+
+            self.activityStats = try? db.fetchTodayActivityStats()
         } catch {
             print("Today reload failed: \(error)")
             self.todayUnits = []
             self.recapEntries = []
             self.recapSelection = []
+            self.activityStats = nil
         }
     }
 }
