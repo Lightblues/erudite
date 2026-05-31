@@ -3,24 +3,23 @@ import Charts
 
 // MARK: - Plan View
 //
-// Two-region layout:
+// Single-scroll layout: Roadmap + 7-Day Workload chart + Tab bar +
+// Worklist all live in one ScrollView so the user can scroll the
+// preview-y stuff out of the way and let the word list take the
+// full viewport. The overview header isn't always-actionable —
+// users glance at it once per visit, then want to focus on a
+// specific bucket — so pinning it at the top wasted screen real
+// estate when the worklists were the actual destination.
 //
 //   ┌─────────────────────────────────────────┐
-//   │  Roadmap  (active book ETA)             │  fixed top
-//   │  7-Day Workload  (Swift Charts)         │
+//   │  Roadmap  (active book ETA)             │  scrolls with
+//   │  7-Day Workload  (Swift Charts)         │  everything
 //   ├─────────────────────────────────────────┤
 //   │  [Today · 18][Tomorrow · 24]…[New · 50] │  segmented tabs
 //   │  ─────────────────────────────────      │
-//   │  selected bucket's word list             │  scrolls independently
-//   │  …                                       │
+//   │  selected bucket's word list             │  full-height
+//   │  …  (scroll up to see chart again)       │
 //   └─────────────────────────────────────────┘
-//
-// The previous layout stacked Roadmap + Chart + a New Words section +
-// a Due Backlog disclosure tree in one ScrollView, which made the
-// page tens of screens tall and forced users to scroll past the
-// chart every time they wanted to see Tomorrow's words. Tab-segmenting
-// the worklist lets each bucket render full-height and keeps the
-// overview always visible up top.
 //
 // Bucket model:
 // - `Today` merges DueBucket.overdue + .today (overdue is highlighted
@@ -43,14 +42,22 @@ struct PlanView: View {
         // Wrap in NavigationStack so .navigationDestination(for:) resolves
         // (NavigationSplitView's detail column doesn't supply its own stack).
         NavigationStack {
-            VStack(alignment: .leading, spacing: 0) {
-                overviewHeader
-                Divider()
-                worklistTabBar
-                Divider()
-                worklistList
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    title
+                    roadmapSection
+                    workloadSection
+                    Divider()
+                    worklistTabBar
+                    Divider()
+                    worklistList
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 24)
+                .padding(.bottom, 24)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationDestination(for: String.self) { wordId in
                 PlanWordDetailLoader(wordId: wordId)
             }
@@ -66,25 +73,18 @@ struct PlanView: View {
         }
     }
 
-    // MARK: - Top: title + Roadmap + Chart (fixed; doesn't scroll with list)
+    // MARK: - Title
 
-    private var overviewHeader: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Plan")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                Spacer()
-                if isLoading {
-                    ProgressView().controlSize(.small)
-                }
+    private var title: some View {
+        HStack {
+            Text("Plan")
+                .font(.largeTitle)
+                .fontWeight(.bold)
+            Spacer()
+            if isLoading {
+                ProgressView().controlSize(.small)
             }
-            roadmapSection
-            workloadSection
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 24)
-        .padding(.bottom, 16)
     }
 
     // MARK: - Section 1: Roadmap
@@ -203,8 +203,7 @@ struct PlanView: View {
             }
             Spacer()
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 8)
+        .padding(.vertical, 4)
     }
 
     private func worklistTabButton(_ tab: WorklistTab) -> some View {
@@ -256,7 +255,13 @@ struct PlanView: View {
         }
     }
 
-    // MARK: - Worklist list (full-height, scrolls independently)
+    // MARK: - Worklist list
+    //
+    // Lives inside the outer ScrollView so it can grow as tall as needed
+    // and scroll alongside the Roadmap + Chart above. We deliberately
+    // do NOT nest a second ScrollView here — the parent's scroll state
+    // belongs to the whole page, not a sub-region. Use `LazyVStack` for
+    // row recycling so a 100-row tab still costs ~constant memory.
 
     @ViewBuilder
     private var worklistList: some View {
@@ -270,40 +275,38 @@ struct PlanView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, minHeight: 200)
+            .padding(.vertical, 24)
         } else {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(summaries.enumerated()), id: \.element.id) { index, summary in
-                        NavigationLink(value: summary.id) {
-                            HStack(spacing: 10) {
-                                if selectedTab == .new {
-                                    Text("\(index + 1)")
-                                        .font(.caption2)
-                                        .foregroundStyle(.tertiary)
-                                        .frame(width: 28, alignment: .trailing)
-                                        .monospacedDigit()
-                                } else if selectedTab == .today,
-                                          let due = summary.dueDate,
-                                          due < Calendar.current.startOfDay(for: Date()) {
-                                    // Overdue marker — flag past-due words
-                                    // inside the merged Today tab.
-                                    Image(systemName: "exclamationmark.circle.fill")
-                                        .foregroundStyle(.red)
-                                        .font(.caption)
-                                        .frame(width: 28)
-                                } else {
-                                    Color.clear.frame(width: 28)
-                                }
-                                WordSummaryRow(summary: summary, density: .compact, showStateBadge: false)
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(summaries.enumerated()), id: \.element.id) { index, summary in
+                    NavigationLink(value: summary.id) {
+                        HStack(spacing: 10) {
+                            if selectedTab == .new {
+                                Text("\(index + 1)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                    .frame(width: 28, alignment: .trailing)
+                                    .monospacedDigit()
+                            } else if selectedTab == .today,
+                                      let due = summary.dueDate,
+                                      due < Calendar.current.startOfDay(for: Date()) {
+                                // Overdue marker — flag past-due words
+                                // inside the merged Today tab.
+                                Image(systemName: "exclamationmark.circle.fill")
+                                    .foregroundStyle(.red)
+                                    .font(.caption)
+                                    .frame(width: 28)
+                            } else {
+                                Color.clear.frame(width: 28)
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 4)
-                            .contentShape(Rectangle())
+                            WordSummaryRow(summary: summary, density: .compact, showStateBadge: false)
                         }
-                        .buttonStyle(.plain)
-                        Divider()
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    Divider()
                 }
             }
         }
