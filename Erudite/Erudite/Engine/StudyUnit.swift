@@ -41,6 +41,12 @@ nonisolated struct StudyUnit: Identifiable, Sendable {
         case newWords                                   // pure new (state=0)
         case mix                                        // reviews + new
         case bookChapter(bookId: String, index: Int)    // book unit N
+        /// User-driven re-practice of words touched today. Unlike all
+        /// other kinds, ratings collected during a `.recap` session do
+        /// NOT write back to FSRS — this is "演练模式". The session is
+        /// tracked in SessionResult/SessionSummary so the user still
+        /// gets feedback, but reviewCard.dueDate isn't bumped.
+        case recap
 
         var icon: String {
             switch self {
@@ -48,6 +54,7 @@ nonisolated struct StudyUnit: Identifiable, Sendable {
             case .newWords: "plus.circle.fill"
             case .mix: "shuffle.circle.fill"
             case .bookChapter: "book.closed.fill"
+            case .recap: "arrow.uturn.left.circle.fill"
             }
         }
 
@@ -57,6 +64,17 @@ nonisolated struct StudyUnit: Identifiable, Sendable {
             case .newWords: .blue
             case .mix: .purple
             case .bookChapter: .indigo
+            case .recap: .pink
+            }
+        }
+
+        /// True iff ratings/typing during this unit should NOT update
+        /// the FSRS schedule. Currently only `.recap` opts out — the
+        /// user is practicing, not committing.
+        var skipsFSRSWriteback: Bool {
+            switch self {
+            case .recap: true
+            default: false
             }
         }
     }
@@ -64,7 +82,7 @@ nonisolated struct StudyUnit: Identifiable, Sendable {
     /// Plain enum so the model layer doesn't import SwiftUI. View code
     /// maps this to a Color.
     enum ColorName: Sendable, Hashable {
-        case orange, blue, purple, indigo
+        case orange, blue, purple, indigo, pink
     }
 
     /// Words in presentation order — used by UnitPreviewView's scan-read list.

@@ -115,6 +115,7 @@ struct UnitPickerView: View {
         case .blue: .blue
         case .purple: .purple
         case .indigo: .indigo
+        case .pink: .pink
         }
     }
 }

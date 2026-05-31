@@ -566,6 +566,10 @@ final class TypingViewModel {
     ///   reflects today's typing as if it had been a flashcard rating.
     private func applyDerivedFSRSRatingIfApplicable(mistakes: Int) {
         guard unitMode, let db = database, let word = currentWord else { return }
+        // Recap units are practice mode — never write back to FSRS even
+        // though they qualify as "unit mode". The user is re-practicing
+        // today's words, not committing to a new review.
+        if activeUnit?.kind.skipsFSRSWriteback == true { return }
         guard let card = try? db.fetchReviewCard(forWord: word.id) else { return }
         // Safety gate: only mature-enough + due cards may receive a
         // typing-derived rating. New cards must be bootstrapped via

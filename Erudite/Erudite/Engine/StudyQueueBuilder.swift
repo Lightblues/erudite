@@ -122,6 +122,60 @@ nonisolated struct StudyQueueBuilder: Sendable {
         )
     }
 
+    // MARK: - Recap unit (user-driven re-practice)
+    //
+    // Build a unit from a hand-picked set of words touched today. Used
+    // by Today's "Re-review · N" CTA: the user multi-selects rows in
+    // the recap list and we materialize them into a `.recap`-kind unit.
+    //
+    // For each word, we pull (or synthesize) its reviewCard so the
+    // session reuses the same Flashcard/Typing pipeline. Synthesis
+    // matters here because some words may have been touched only via
+    // typing — they might still be `.new` and lack a rated card; we
+    // don't want that to silently drop them from the unit.
+    //
+    // The session's commit paths (StudyViewModel.rate /
+    // TypingViewModel.applyDerivedFSRSRatingIfApplicable) check
+    // `unit.kind.skipsFSRSWriteback` and bail early — recap is a
+    // practice mode, not a re-rating.
+
+    func buildRecapUnit(from entries: [DatabaseService.RecapEntry]) throws -> StudyUnit? {
+        guard !entries.isEmpty else { return nil }
+        let wordIds = entries.map(\.wordId)
+        let wordsDict = try db.fetchWords(ids: wordIds)
+        guard !wordsDict.isEmpty else { return nil }
+
+        // Preserve the order the caller passed us. The Today UI sorts by
+        // pressingScore (worst first) — we want to re-practice in that
+        // same order so the user starts on what they need most.
+        var cards: [ReviewCard] = []
+        for wid in wordIds {
+            guard wordsDict[wid] != nil else { continue }
+            if let c = try db.fetchReviewCard(forWord: wid) {
+                cards.append(c)
+            } else {
+                cards.append(ReviewCard(wordId: wid))
+            }
+        }
+
+        let est = estimateMinutes(cardCount: cards.count, hasNew: false)
+        let title: String
+        if cards.count == 1 {
+            title = "Re-review · 1 word"
+        } else {
+            title = "Re-review · \(cards.count) words"
+        }
+        return StudyUnit(
+            id: UUID(),
+            kind: .recap,
+            cards: cards,
+            words: wordsDict,
+            title: title,
+            subtitle: "\(cards.count) cards · ~\(est) min · practice mode",
+            estimatedMinutes: est
+        )
+    }
+
     // MARK: - Helpers
 
     /// Empirical: ~25s per card for review, ~30s for new (extra reading).

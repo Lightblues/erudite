@@ -1526,6 +1526,15 @@ nonisolated final class DatabaseService: Sendable {
             if latestRating == .easy { return 25 }
             return 30
         }
+
+        /// True iff the user "didn't really get this one" — Today's
+        /// recap section pre-selects these for the [Re-review · N] CTA.
+        /// Anyone can be opted in/out manually before re-review starts.
+        var needsWork: Bool {
+            latestRating == .again
+                || latestRating == .hard
+                || typingMistakes > 0
+        }
     }
 
     func fetchTodayRecap(now: Date = Date()) throws -> [RecapEntry] {

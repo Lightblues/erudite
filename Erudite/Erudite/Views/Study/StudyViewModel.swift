@@ -230,18 +230,24 @@ final class StudyViewModel {
         case .easy: result.easy
         }
 
-        // Persist
-        do {
-            try db.updateCard(updatedCard)
-            try db.insertReviewLog(ReviewLog(
-                cardId: card.id,
-                rating: rating,
-                state: card.state,
-                elapsedDays: card.elapsedDays,
-                scheduledDays: updatedCard.scheduledDays
-            ))
-        } catch {
-            print("Failed to save review: \(error)")
+        // Persist — UNLESS this is a recap unit (practice mode). Recap
+        // sessions show ratings in SessionSummary but never bump the
+        // FSRS schedule; the user is re-practicing today's words, not
+        // committing to a new review.
+        let skipsFSRS = activeUnit?.kind.skipsFSRSWriteback ?? false
+        if !skipsFSRS {
+            do {
+                try db.updateCard(updatedCard)
+                try db.insertReviewLog(ReviewLog(
+                    cardId: card.id,
+                    rating: rating,
+                    state: card.state,
+                    elapsedDays: card.elapsedDays,
+                    scheduledDays: updatedCard.scheduledDays
+                ))
+            } catch {
+                print("Failed to save review: \(error)")
+            }
         }
 
         cardsStudied += 1
