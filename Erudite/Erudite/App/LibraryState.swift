@@ -34,6 +34,10 @@ final class LibraryState {
     var selectedSort: WordSort = .bookOrder
     var searchText: String = ""
     var debouncedSearch: String = ""
+    /// Words list (default) vs Chapters list (when a Book is picked). The
+    /// Chapters mode sliced the book's words into `unitSize` chapters and
+    /// lets the user pick one to study via the same UnitPreview pipeline.
+    var viewMode: LibraryViewMode = .words
 
     // MARK: - Loaded data
 
@@ -82,6 +86,7 @@ final class LibraryState {
         selectedSort = .bookOrder
         searchText = ""
         debouncedSearch = ""
+        viewMode = .words
         summaries = []
         totalMatching = 0
         totalAll = 0
@@ -90,5 +95,18 @@ final class LibraryState {
         didInitFromAppState = false
         selectedWordId = nil
         selectedFullWord = nil
+    }
+}
+
+/// Library top-level mode: word list (default) vs chapter list.
+nonisolated enum LibraryViewMode: String, CaseIterable, Hashable {
+    case words
+    case chapters
+
+    var label: String {
+        switch self {
+        case .words: "Words"
+        case .chapters: "Chapters"
+        }
     }
 }

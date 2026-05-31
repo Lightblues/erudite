@@ -29,6 +29,11 @@ struct LibraryView: View {
     // we don't want to pin a Task across tab switches.
     @State private var searchDebounceTask: Task<Void, Never>?
 
+    /// Chapter the user just clicked in the Chapters view. Drives the
+    /// UnitPreview sheet — same component Today uses, so chapter-driven
+    /// study goes through the exact same flow as homework-driven study.
+    @State private var chapterPreviewUnit: StudyUnit?
+
     // Layout breakpoint for split vs narrow modes.
     private let splitMinWidth: CGFloat = 900
 
@@ -49,6 +54,9 @@ struct LibraryView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .searchable(text: $lib.searchText, prompt: "Search spelling or definition...")
+        .sheet(item: $chapterPreviewUnit) { unit in
+            UnitPreviewView(unit: unit)
+        }
         .onChange(of: lib.searchText) { _, newValue in
             scheduleSearch(newValue)
         }
@@ -150,6 +158,17 @@ struct LibraryView: View {
                     .font(.title)
                     .fontWeight(.bold)
                 Spacer()
+                // View-mode toggle (Words vs Chapters). Only meaningful
+                // when a Book is selected; "All Books" can't have chapters.
+                if lib.selectedBookId != nil {
+                    Picker("", selection: $lib.viewMode) {
+                        ForEach(LibraryViewMode.allCases, id: \.self) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 180)
+                }
                 if lib.isLoading {
                     ProgressView().controlSize(.small)
                 }
@@ -191,7 +210,9 @@ struct LibraryView: View {
     @ViewBuilder
     private var listPane: some View {
         @Bindable var lib = appState.libraryState
-        if !appState.isDBReady {
+        if lib.viewMode == .chapters && lib.selectedBookId != nil {
+            chaptersListPane
+        } else if !appState.isDBReady {
             ProgressView("Loading database...")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if lib.summaries.isEmpty && !lib.debouncedSearch.isEmpty {
@@ -221,6 +242,81 @@ struct LibraryView: View {
                 footer
             }
         }
+    }
+
+    // MARK: - Chapters list (Library Chapter view)
+    //
+    // Slices the active book into N-word chapters where N = unitSize. Each
+    // row → opens UnitPreviewView for that chapter, going through the
+    // same Today→Preview→Flashcard/Typing flow. Replaces the old "auto-
+    // injected GRE 3000 · Unit 1" on Today; chapter browsing now lives
+    // here where it belongs.
+
+    @ViewBuilder
+    private var chaptersListPane: some View {
+        if let bookId = appState.libraryState.selectedBookId,
+           let book = appState.wordBooks.first(where: { $0.id == bookId }) {
+            let chapterSize = appState.settings.unitSize
+            let totalChapters = (book.wordCount + chapterSize - 1) / chapterSize
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    ForEach(0..<totalChapters, id: \.self) { idx in
+                        chapterRow(bookId: bookId, index: idx, total: totalChapters, chapterSize: chapterSize)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
+        } else {
+            ContentUnavailableView(
+                "Pick a book",
+                systemImage: "book.closed",
+                description: Text("Select a book to browse it chapter by chapter.")
+            )
+        }
+    }
+
+    private func chapterRow(bookId: String, index: Int, total: Int, chapterSize: Int) -> some View {
+        Button {
+            // Build the chapter unit and surface it via UnitPreview.
+            // We don't pin currentUnit yet — preview lets the user
+            // back out without committing.
+            guard let db = appState.databaseService else { return }
+            let builder = StudyQueueBuilder(db: db)
+            if let unit = try? builder.buildChapterUnit(
+                bookId: bookId,
+                chapterIndex: index,
+                chapterSize: chapterSize
+            ) {
+                chapterPreviewUnit = unit
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "book.closed.fill")
+                    .foregroundStyle(.indigo)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Unit \(index + 1)")
+                        .font(.subheadline.weight(.semibold))
+                    Text("\(chapterSize) words · ~\((chapterSize * 30) / 60) min")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(.quaternary, lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
     }
 
     private var footer: some View {
