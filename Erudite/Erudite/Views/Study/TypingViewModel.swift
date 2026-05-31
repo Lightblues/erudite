@@ -188,6 +188,17 @@ final class TypingViewModel {
     private let pronunciation = PronunciationService()
     private var loopTimer: Timer?
 
+    /// True iff the active session was started from a pre-built StudyUnit
+    /// (Today → UnitPreview → Typing). In unit mode, word completions
+    /// emit derived FSRS ratings (see advance()) and chapter navigation
+    /// is disabled — the unit IS the session.
+    private(set) var unitMode: Bool = false
+    /// The unit being consumed, if any. Cleared when a new session starts.
+    private(set) var activeUnit: StudyUnit?
+    /// FSRS engine for deriving rating intervals when a typed word
+    /// completes in unit mode.
+    private let engine = FSRSEngine()
+
     // Sound effects: pre-loaded for rapid playback
     private let correctSound: NSSound? = {
         let s = NSSound(named: "Tink")
@@ -236,15 +247,54 @@ final class TypingViewModel {
 
     // MARK: - Public API
 
+    /// Standalone entry: load the persisted chapter for `bookId` from
+    /// UserDefaults and let the user browse chapters freely. This is the
+    /// experience when the user opens the Typing tab directly. No FSRS
+    /// feedback is emitted in standalone mode — the user is browsing, not
+    /// committing to a review session.
     func start(database: DatabaseService, bookId: String?) {
         self.database = database
         self.bookId = bookId
+        self.unitMode = false
+        self.activeUnit = nil
 
         let savedChapter = UserDefaults.standard.integer(forKey: progressKey)
         self.chapterIndex = savedChapter
         self.pronunciation.voice = accent == .us ? PronunciationService.Voice.us : PronunciationService.Voice.uk
 
         loadChapter()
+    }
+
+    /// Unit-driven entry: consume a pre-resolved StudyUnit from
+    /// Today/UnitPreview. The chapter browser is bypassed; the unit's
+    /// words become THE chapter for this session. Word completions emit
+    /// derived FSRS ratings (see advance()).
+    func start(unit: StudyUnit, database: DatabaseService) {
+        self.database = database
+        self.bookId = nil
+        self.unitMode = true
+        self.activeUnit = unit
+        self.pronunciation.voice = accent == .us ? PronunciationService.Voice.us : PronunciationService.Voice.uk
+
+        // Install the unit's words as the "chapter".
+        self.chapterIndex = 0
+        self.totalChapters = 1
+        self.words = unit.cards.compactMap { unit.words[$0.wordId] }
+        if wordOrder == .shuffle { self.words.shuffle() }
+
+        guard !self.words.isEmpty else { phase = .empty; return }
+
+        currentIndex = 0
+        wordsCompleted = 0
+        totalMistakes = 0
+        totalInputs = 0
+        totalCorrect = 0
+        accumulatedTime = 0
+        activeStartTime = nil
+        wordResults = []
+        showWordCard = false
+        setupCurrentWord()
+        phase = .idle
     }
 
     /// Called when any key is pressed while idle → enter typing mode
@@ -467,9 +517,63 @@ final class TypingViewModel {
         }
 
         recordTypingLog(mistakes: wordMistakes, duration: duration)
+        applyDerivedFSRSRatingIfApplicable(mistakes: wordMistakes)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.advanceToNext()
+        }
+    }
+
+    /// Cross-pollinate Typing → FSRS in unit mode. The rules:
+    ///
+    /// - Only fires in `unitMode` (i.e. user came from Today → UnitPreview).
+    ///   Standalone Typing (free chapter browsing) doesn't touch reviewCard.
+    /// - Only applies when the card is `state != .new` AND already due
+    ///   (`dueDate <= now`). This is the key safety gate: we don't let
+    ///   Typing skip the New→Learning bootstrap (otherwise users could
+    ///   "type their way past" all initial flashcard exposure), and we
+    ///   don't pull future reviews forward (FSRS already decided the card
+    ///   isn't due — overriding would distort the schedule).
+    /// - mistakes → rating mapping mirrors human intuition:
+    ///     0 mistakes  → Good (smooth recall)
+    ///     1–2         → Hard (knew it but stumbled)
+    ///     3+          → Again (didn't really know it)
+    /// - Persists via FSRSEngine.schedule + db.updateCard +
+    ///   db.insertReviewLog so the same card seen in Flashcard tomorrow
+    ///   reflects today's typing as if it had been a flashcard rating.
+    private func applyDerivedFSRSRatingIfApplicable(mistakes: Int) {
+        guard unitMode, let db = database, let word = currentWord else { return }
+        guard let card = try? db.fetchReviewCard(forWord: word.id) else { return }
+        // Safety gate: only mature-enough + due cards may receive a
+        // typing-derived rating. New cards must be bootstrapped via
+        // Flashcard's reveal cycle.
+        guard card.state != .new, card.dueDate <= Date() else { return }
+
+        let rating: Rating = switch mistakes {
+        case 0: .good
+        case 1, 2: .hard
+        default: .again
+        }
+
+        let result = engine.schedule(card: card)
+        let updated: ReviewCard = switch rating {
+        case .again: result.again
+        case .hard: result.hard
+        case .good: result.good
+        case .easy: result.easy   // unreachable here; mapping never picks easy
+        }
+
+        do {
+            try db.updateCard(updated)
+            try db.insertReviewLog(ReviewLog(
+                cardId: card.id,
+                rating: rating,
+                state: card.state,
+                elapsedDays: card.elapsedDays,
+                scheduledDays: updated.scheduledDays
+            ))
+        } catch {
+            print("Typing derived FSRS update failed: \(error)")
         }
     }
 

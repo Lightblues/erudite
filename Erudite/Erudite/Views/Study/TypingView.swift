@@ -42,7 +42,15 @@ struct TypingView: View {
         }
         .task {
             if let db = appState.databaseService {
-                viewModel.start(database: db, bookId: appState.activeBookId)
+                if let unit = appState.currentUnit {
+                    // Unit-driven entry from Today → UnitPreview → Typing.
+                    // Consume the pinned unit and clear it so we don't
+                    // re-consume on next tab visit.
+                    viewModel.start(unit: unit, database: db)
+                    appState.currentUnit = nil
+                } else {
+                    viewModel.start(database: db, bookId: appState.activeBookId)
+                }
             }
         }
     }

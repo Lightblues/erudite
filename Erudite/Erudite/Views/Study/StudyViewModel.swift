@@ -108,6 +108,17 @@ final class StudyViewModel {
 
     // MARK: - Init
 
+    /// True iff the active session was started from a pre-built StudyUnit
+    /// (Today → UnitPreview → Flashcard). In unit mode:
+    /// - The card queue is fixed (no "load more from FSRS" surprises).
+    /// - We don't slice every `unitSize` ratings — the whole unit IS the
+    ///   session; the queue running out shows the session summary.
+    /// - The complete-state UI swaps "Study More" for "Back to Today".
+    private(set) var inUnitMode: Bool = false
+
+    /// The unit being consumed, if any. Cleared on session end.
+    private(set) var activeUnit: StudyUnit?
+
     init() {
         self.accent = TypingViewModel.Accent(rawValue: UserDefaults.standard.string(forKey: "typing_accent") ?? "") ?? .us
         self.loopPronunciation = UserDefaults.standard.bool(forKey: "typing_loopPronunciation")
@@ -118,9 +129,14 @@ final class StudyViewModel {
 
     // MARK: - Public API
 
+    /// Legacy entry: build the queue ourselves from FSRS. Kept for backwards
+    /// compatibility (e.g. AI tools that call `appState.startStudy(mode:)`)
+    /// but the primary path is `start(unit:database:)` from UnitPreview.
     func start(database: DatabaseService, mode: StudyQueueMode = .mixed, bookId: String? = nil) {
         self.database = database
         self.bookId = bookId
+        self.inUnitMode = false
+        self.activeUnit = nil
         self.sessionStartTime = Date()
         self.cardsStudied = 0
         self.history = []
@@ -133,6 +149,37 @@ final class StudyViewModel {
         pronunciation.clearCache()
         loadQueue(mode: mode)
     }
+
+    /// Unit-driven entry: consume a pre-resolved StudyUnit. The user already
+    /// previewed the words on UnitPreviewView, so we skip the queue build
+    /// and dive straight into the first card.
+    func start(unit: StudyUnit, database: DatabaseService) {
+        self.database = database
+        self.bookId = nil
+        self.inUnitMode = true
+        self.activeUnit = unit
+        self.sessionStartTime = Date()
+        self.cardsStudied = 0
+        self.history = []
+        self.reviewResults = []
+        self.unitsCompleted = 0
+        self.cardsThisUnit = 0
+        self.unitResults = []
+        self.unitStartTime = Date()
+        pronunciation.voice = accent == .us ? PronunciationService.Voice.us : PronunciationService.Voice.uk
+        pronunciation.clearCache()
+
+        // Direct queue installation — bypass loadQueue's mode-driven SQL.
+        cardQueue = unit.cards
+        wordCache = unit.words
+        cardsRemaining = cardQueue.count
+        guard !cardQueue.isEmpty else {
+            phase = .empty
+            return
+        }
+        advanceToNext()
+    }
+
 
     /// Pause session (Esc key)
     func deactivate() {
@@ -207,7 +254,11 @@ final class StudyViewModel {
         // If queue is empty, run the normal advance which transitions to
         // .complete; otherwise check for unit boundary first so the unit
         // summary card always shows before the queue is exhausted.
-        if cardsThisUnit >= unitSize && !cardQueue.isEmpty {
+        //
+        // In unit mode the entire queue IS the unit, so we don't slice
+        // mid-session — completing the queue naturally lands on .complete
+        // which renders the same summary content.
+        if !inUnitMode && cardsThisUnit >= unitSize && !cardQueue.isEmpty {
             // Push current to history (advanceToNext does this; we need it
             // here too so go-back works after pressing Continue).
             if let card = currentCard {
