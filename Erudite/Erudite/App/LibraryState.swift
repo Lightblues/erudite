@@ -6,11 +6,11 @@ import Foundation
 // LibraryView itself so that switching tabs (Today → Library → Today) does
 // NOT clobber:
 //
-// - the loaded summaries page
+// - the loaded summaries set
 // - selected word id (split layout)
 // - filter / sort / search picker positions
+// - the selected unit index (when browsing within a unit)
 // - the resizable list-pane width
-// - the loaded offset (so "Load More" sticks across tab switches)
 //
 // SwiftUI rebuilds the LibraryView when the user switches tabs, which
 // re-runs `.task` and resets every `@State` to its initial value. By living
@@ -34,18 +34,26 @@ final class LibraryState {
     var selectedSort: WordSort = .bookOrder
     var searchText: String = ""
     var debouncedSearch: String = ""
-    /// Words list (default) vs Chapters list (when a Book is picked). The
-    /// Chapters mode sliced the book's words into `unitSize` chapters and
-    /// lets the user pick one to study via the same UnitPreview pipeline.
-    var viewMode: LibraryViewMode = .words
+    /// Index of the active book unit, or nil for "All units" (= entire
+    /// book). When non-nil:
+    /// - the SQL slice is the corresponding unit's word range
+    /// - State / Sort pickers are hidden in the header (the unit IS the
+    ///   filter; sort is forced to .bookOrder so the unit's natural
+    ///   order is preserved)
+    /// - the footer shows progress counts + [Flashcard] [Typing] direct-
+    ///   start buttons that consume the unit
+    var selectedUnitIndex: Int?
+    /// Cached unit ranges for the active book. Populated when the user
+    /// picks a book (or unitSize changes); empty when no book selected.
+    /// Drives both the picker labels and the wordId slice when a unit
+    /// is active.
+    var unitRanges: [DatabaseService.UnitRange] = []
 
     // MARK: - Loaded data
 
     var summaries: [WordSummary] = []
     var totalMatching: Int = 0
-    var totalAll: Int = 0
     var isLoading: Bool = false
-    var loadedCount: Int = 0
     var didInitFromAppState: Bool = false   // gate for "first appear" wiring
 
     // MARK: - Selection (split layout)
@@ -86,27 +94,13 @@ final class LibraryState {
         selectedSort = .bookOrder
         searchText = ""
         debouncedSearch = ""
-        viewMode = .words
+        selectedUnitIndex = nil
+        unitRanges = []
         summaries = []
         totalMatching = 0
-        totalAll = 0
         isLoading = false
-        loadedCount = 0
         didInitFromAppState = false
         selectedWordId = nil
         selectedFullWord = nil
-    }
-}
-
-/// Library top-level mode: word list (default) vs chapter list.
-nonisolated enum LibraryViewMode: String, CaseIterable, Hashable {
-    case words
-    case chapters
-
-    var label: String {
-        switch self {
-        case .words: "Words"
-        case .chapters: "Chapters"
-        }
     }
 }

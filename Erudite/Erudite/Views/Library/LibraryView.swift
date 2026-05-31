@@ -1,26 +1,35 @@
 import SwiftUI
 
-// MARK: - Library View (Word Lists + Browser)
+// MARK: - Library View
 //
-// SQL-driven, filtered list of word summaries. All filtering and sorting
-// happens in DatabaseService.fetchWordSummaries(); this view only owns the
-// search text, picker selections, and the resulting page.
+// Library answers one question: "browse this app's words." Everything else
+// is a slice on that list.
+//
+//   - Book picker        : which book (or "All Books")
+//   - Unit picker        : which slice within the book (or "All units")
+//                          Visible only when a Book is selected.
+//   - State picker       : All / New / Learning / Review / Mature
+//                          Hidden in Unit mode — the unit is small enough
+//                          that the per-row state badge is sufficient.
+//   - Sort picker        : Book Order / A → Z
+//                          Hidden in Unit mode — units are book-order slices,
+//                          re-sorting them alphabetically would scatter them.
+//   - Search             : text search; cross-cuts everything
+//   - A-Z jump bar       : Visible only when sort = .alphabetical
+//
+// In Unit mode the footer surfaces:
+//   - progress counts (mastered / review / learning / new)
+//   - direct-start [Flashcard] [Typing] action buttons that build the
+//     unit and pin it to AppState.currentUnit, no UnitPreview detour
 //
 // State storage:
-//   - All "live state" (loaded summaries, selection, filter pickers, scroll
-//     position) lives in `AppState.libraryState` so switching tabs doesn't
+//   - All "live state" (loaded summaries, selection, filter pickers, list
+//     pane width) lives in AppState.libraryState so switching tabs doesn't
 //     reset the user's place. See LibraryState.
-//   - Search-debounce task is a local @State because it's in-flight only.
 //
-// Layout:
-//   - >= 900pt: Mail-style split with a *resizable* divider. List defaults
-//     to 360pt (Mail-like), draggable 280–600pt, persisted to UserDefaults.
-//     Up/Down arrow keys move selection in the list (List(selection:)
-//     handles it). Esc clears selection. Cmd+F focuses search.
-//   - <  900pt: NavigationStack push, like before. Row tap pushes detail page.
-//
-// The full Word is fetched lazily from the selected wordId so list rendering
-// never decodes a 13K-row JSON blob.
+// Pagination was removed in erudite-31 — Library now reads the full
+// matching slice and lets SwiftUI List recycle rows lazily. Pagination
+// + jump-bar were two overlapping "position" mental models.
 
 struct LibraryView: View {
     @Environment(AppState.self) private var appState
@@ -29,15 +38,20 @@ struct LibraryView: View {
     // we don't want to pin a Task across tab switches.
     @State private var searchDebounceTask: Task<Void, Never>?
 
-    /// Chapter the user just clicked in the Chapters view. Drives the
-    /// UnitPreview sheet — same component Today uses, so chapter-driven
-    /// study goes through the exact same flow as homework-driven study.
-    @State private var chapterPreviewUnit: StudyUnit?
-
     // Layout breakpoint for split vs narrow modes.
     private let splitMinWidth: CGFloat = 900
 
     private var lib: LibraryState { appState.libraryState }
+
+    /// True iff the user has selected a specific unit. Drives header
+    /// picker visibility and footer mode.
+    private var inUnitMode: Bool { lib.selectedUnitIndex != nil }
+
+    /// The currently-selected UnitRange, if any.
+    private var selectedUnit: DatabaseService.UnitRange? {
+        guard let idx = lib.selectedUnitIndex else { return nil }
+        return lib.unitRanges.first(where: { $0.index == idx })
+    }
 
     var body: some View {
         @Bindable var lib = appState.libraryState
@@ -54,9 +68,6 @@ struct LibraryView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .searchable(text: $lib.searchText, prompt: "Search spelling or definition...")
-        .sheet(item: $chapterPreviewUnit) { unit in
-            UnitPreviewView(unit: unit)
-        }
         .onChange(of: lib.searchText) { _, newValue in
             scheduleSearch(newValue)
         }
@@ -66,12 +77,22 @@ struct LibraryView: View {
             if lib.didInitFromAppState && newValue != appState.activeBookId {
                 appState.selectBook(newValue)
             }
-            Task { await reload() }
+            // Book changed → unit list is now stale, and any selected unit
+            // index is meaningless in the new book.
+            lib.selectedUnitIndex = nil
+            Task {
+                await reloadUnitRanges()
+                await reload()
+            }
         }
         .onChange(of: lib.selectedState) { _, _ in Task { await reload() } }
         .onChange(of: lib.selectedSort) { _, _ in Task { await reload() } }
+        .onChange(of: lib.selectedUnitIndex) { _, _ in Task { await reload() } }
         .onChange(of: lib.selectedWordId) { _, newId in
             Task { await loadFullWord(for: newId) }
+        }
+        .onChange(of: appState.settings.unitSize) { _, _ in
+            Task { await reloadUnitRanges() }
         }
         .onChange(of: appState.activeBookId) { _, newValue in
             // Pull AppState changes (e.g. user changed book on Today) into our
@@ -86,11 +107,11 @@ struct LibraryView: View {
             if !lib.didInitFromAppState {
                 lib.selectedBookId = appState.activeBookId
                 lib.didInitFromAppState = true
-                await loadTotalCount()
+                await reloadUnitRanges()
                 await reload()
             } else if lib.summaries.isEmpty {
                 // Came back to a state that was emptied — refetch.
-                await loadTotalCount()
+                await reloadUnitRanges()
                 await reload()
             }
         }
@@ -99,10 +120,6 @@ struct LibraryView: View {
     // MARK: - Layouts
 
     /// Split layout with a draggable vertical divider between list and detail.
-    /// We use a fixed-width list pane on the left and let the detail pane fill
-    /// the remainder — Mail-style. The drag handle lives in the divider's
-    /// hit-region so it doesn't compete with row clicks. A vertical A-Z jump
-    /// bar sits between the list and the divider.
     @ViewBuilder
     private func splitLayout(totalWidth: CGFloat) -> some View {
         @Bindable var lib = appState.libraryState
@@ -114,7 +131,9 @@ struct LibraryView: View {
             HStack(spacing: 0) {
                 listPane
                     .frame(width: listWidth)
-                AlphabetJumpBar(onJump: jumpToLetter)
+                if lib.selectedSort == .alphabetical {
+                    AlphabetJumpBar(onJump: jumpToLetter)
+                }
                 ResizableDivider(width: $lib.listPaneWidth, totalWidth: totalWidth)
                 detailPane
                     .frame(maxWidth: .infinity)
@@ -149,6 +168,11 @@ struct LibraryView: View {
     }
 
     // MARK: - Header
+    //
+    // Two rows. First row: title + loading indicator. Second row: the
+    // pickers, in priority order. Unit picker is the new center of gravity
+    // when a book is selected — it sits right next to Book to make the
+    // "book → unit" relationship visually obvious.
 
     private var header: some View {
         @Bindable var lib = appState.libraryState
@@ -158,17 +182,6 @@ struct LibraryView: View {
                     .font(.title)
                     .fontWeight(.bold)
                 Spacer()
-                // View-mode toggle (Words vs Chapters). Only meaningful
-                // when a Book is selected; "All Books" can't have chapters.
-                if lib.selectedBookId != nil {
-                    Picker("", selection: $lib.viewMode) {
-                        ForEach(LibraryViewMode.allCases, id: \.self) { mode in
-                            Text(mode.label).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 180)
-                }
                 if lib.isLoading {
                     ProgressView().controlSize(.small)
                 }
@@ -185,19 +198,37 @@ struct LibraryView: View {
                     .frame(maxWidth: 220)
                 }
 
-                Picker("State", selection: $lib.selectedState) {
-                    ForEach(WordStateFilter.allCases, id: \.self) { state in
-                        Text(state.label).tag(state)
+                // Unit picker only meaningful when a book is selected.
+                if lib.selectedBookId != nil, !lib.unitRanges.isEmpty {
+                    Picker("Unit", selection: $lib.selectedUnitIndex) {
+                        Text("All units").tag(Int?.none)
+                        Divider()
+                        ForEach(lib.unitRanges) { range in
+                            Text("\(range.label) (\(range.rangeText))")
+                                .tag(Int?.some(range.index))
+                        }
                     }
+                    .frame(maxWidth: 280)
                 }
-                .frame(maxWidth: 140)
 
-                Picker("Sort", selection: $lib.selectedSort) {
-                    ForEach(WordSort.allCases, id: \.self) { sort in
-                        Text(sort.label).tag(sort)
+                // State + Sort hide in Unit mode — they'd be redundant
+                // (per-row state badges are visible anyway, and sorting
+                // alphabetically would scatter the unit's natural order).
+                if !inUnitMode {
+                    Picker("State", selection: $lib.selectedState) {
+                        ForEach(WordStateFilter.allCases, id: \.self) { state in
+                            Text(state.label).tag(state)
+                        }
                     }
+                    .frame(maxWidth: 140)
+
+                    Picker("Sort", selection: $lib.selectedSort) {
+                        ForEach(WordSort.allCases, id: \.self) { sort in
+                            Text(sort.label).tag(sort)
+                        }
+                    }
+                    .frame(maxWidth: 160)
                 }
-                .frame(maxWidth: 160)
 
                 Spacer()
             }
@@ -210,9 +241,7 @@ struct LibraryView: View {
     @ViewBuilder
     private var listPane: some View {
         @Bindable var lib = appState.libraryState
-        if lib.viewMode == .chapters && lib.selectedBookId != nil {
-            chaptersListPane
-        } else if !appState.isDBReady {
+        if !appState.isDBReady {
             ProgressView("Loading database...")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if lib.summaries.isEmpty && !lib.debouncedSearch.isEmpty {
@@ -221,7 +250,7 @@ struct LibraryView: View {
             ContentUnavailableView(
                 "No words match these filters",
                 systemImage: "tray",
-                description: Text("Try clearing the State picker or selecting a different book.")
+                description: Text(emptyDescriptionText)
             )
         } else {
             VStack(spacing: 0) {
@@ -244,106 +273,142 @@ struct LibraryView: View {
         }
     }
 
-    // MARK: - Chapters list (Library Chapter view)
+    private var emptyDescriptionText: String {
+        if inUnitMode {
+            return "This unit appears empty. Try clearing the search."
+        }
+        return "Try clearing the State picker or selecting a different book."
+    }
+
+    // MARK: - Footer
     //
-    // Slices the active book into N-word chapters where N = unitSize. Each
-    // row → opens UnitPreviewView for that chapter, going through the
-    // same Today→Preview→Flashcard/Typing flow. Replaces the old "auto-
-    // injected GRE 3000 · Unit 1" on Today; chapter browsing now lives
-    // here where it belongs.
+    // Two flavors:
+    //
+    // - In Unit mode, the footer becomes an action surface: progress
+    //   counts on the left, [Flashcard] [Typing] direct-start buttons on
+    //   the right. The user already saw the words in the list above —
+    //   no UnitPreview detour, just press a button and study.
+    //
+    // - In Book mode, the footer is a thin status line showing how many
+    //   rows match the current filters.
 
     @ViewBuilder
-    private var chaptersListPane: some View {
-        if let bookId = appState.libraryState.selectedBookId,
-           let book = appState.wordBooks.first(where: { $0.id == bookId }) {
-            let chapterSize = appState.settings.unitSize
-            let totalChapters = (book.wordCount + chapterSize - 1) / chapterSize
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 6) {
-                    ForEach(0..<totalChapters, id: \.self) { idx in
-                        chapterRow(bookId: bookId, index: idx, total: totalChapters, chapterSize: chapterSize)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-            }
-        } else {
-            ContentUnavailableView(
-                "Pick a book",
-                systemImage: "book.closed",
-                description: Text("Select a book to browse it chapter by chapter.")
-            )
-        }
-    }
-
-    private func chapterRow(bookId: String, index: Int, total: Int, chapterSize: Int) -> some View {
-        Button {
-            // Build the chapter unit and surface it via UnitPreview.
-            // We don't pin currentUnit yet — preview lets the user
-            // back out without committing.
-            guard let db = appState.databaseService else { return }
-            let builder = StudyQueueBuilder(db: db)
-            if let unit = try? builder.buildChapterUnit(
-                bookId: bookId,
-                chapterIndex: index,
-                chapterSize: chapterSize
-            ) {
-                chapterPreviewUnit = unit
-            }
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "book.closed.fill")
-                    .foregroundStyle(.indigo)
-                    .frame(width: 28)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Unit \(index + 1)")
-                        .font(.subheadline.weight(.semibold))
-                    Text("\(chapterSize) words · ~\((chapterSize * 30) / 60) min")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(.quaternary, lineWidth: 0.5)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 10))
-        }
-        .buttonStyle(.plain)
-    }
-
     private var footer: some View {
+        if inUnitMode {
+            unitFooter
+        } else {
+            bookFooter
+        }
+    }
+
+    private var bookFooter: some View {
         HStack(spacing: 12) {
-            Text(footerText)
+            Text(bookFooterText)
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()
-            if lib.loadedCount < lib.totalMatching {
-                Button("Load More") {
-                    Task { await loadMore() }
-                }
-                .controlSize(.small)
-            }
         }
         .padding(.horizontal)
         .padding(.vertical, 6)
         .background(.bar)
     }
 
-    private var footerText: String {
+    private var bookFooterText: String {
         if lib.totalMatching == 0 { return "No matches" }
-        let shown = min(lib.loadedCount, lib.totalMatching)
-        if lib.totalMatching >= lib.totalAll {
-            return "Showing \(shown) of \(lib.totalMatching)"
+        return "Showing \(lib.summaries.count)"
+    }
+
+    @ViewBuilder
+    private var unitFooter: some View {
+        let counts = unitCounts
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                if let unit = selectedUnit {
+                    Text(unit.rangeText)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Button {
+                    startUnit(in: .flashcard)
+                } label: {
+                    Label("Flashcard", systemImage: "rectangle.on.rectangle")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.purple)
+                .controlSize(.small)
+                .disabled(lib.summaries.isEmpty)
+
+                Button {
+                    startUnit(in: .typing)
+                } label: {
+                    Label("Typing", systemImage: "keyboard")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.indigo)
+                .controlSize(.small)
+                .disabled(lib.summaries.isEmpty)
+            }
+            HStack(spacing: 14) {
+                progressChip(label: "Mastered", count: counts.mastered, color: .green)
+                progressChip(label: "Review", count: counts.review, color: .orange)
+                progressChip(label: "Learning", count: counts.learning, color: .yellow)
+                progressChip(label: "New", count: counts.new, color: .blue)
+                Spacer()
+                Text("\(lib.summaries.count) words")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
         }
-        return "Showing \(shown) of \(lib.totalMatching) (total \(lib.totalAll))"
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(.bar)
+    }
+
+    private func progressChip(label: String, count: Int, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(count > 0 ? color : Color.secondary.opacity(0.3)).frame(width: 6, height: 6)
+            Text("\(count)")
+                .font(.caption2.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(count > 0 ? .primary : .secondary)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Per-state count derived from the loaded summaries. Mature is
+    /// approximated as `.review` (we don't have stability in the
+    /// projection); good enough as a coarse "I've got this" signal.
+    private var unitCounts: (mastered: Int, review: Int, learning: Int, new: Int) {
+        var mastered = 0, review = 0, learning = 0, new = 0
+        for s in lib.summaries {
+            switch s.cardState {
+            case .review: review += 1; mastered += 1
+            case .learning, .relearning: learning += 1
+            case .new, .none: new += 1
+            }
+        }
+        // mastered double-counts review for now (review = "I'm in the
+        // review schedule, doing OK"). Strict mature would need
+        // stability >= 21d which lives on reviewCard, not the summary.
+        return (mastered, review, learning, new)
+    }
+
+    private func startUnit(in mode: UnitStudyMode) {
+        guard let bookId = lib.selectedBookId,
+              let idx = lib.selectedUnitIndex,
+              let db = appState.databaseService else { return }
+        let chapterSize = appState.settings.unitSize
+        let builder = StudyQueueBuilder(db: db)
+        guard let unit = try? builder.buildChapterUnit(
+            bookId: bookId,
+            chapterIndex: idx,
+            chapterSize: chapterSize
+        ) else { return }
+        appState.startUnit(unit, in: mode)
     }
 
     // MARK: - Detail pane (split layout only)
@@ -377,7 +442,7 @@ struct LibraryView: View {
             ContentUnavailableView(
                 "No words match these filters",
                 systemImage: "tray",
-                description: Text("Try clearing the State picker or selecting a different book.")
+                description: Text(emptyDescriptionText)
             )
         } else {
             VStack(spacing: 0) {
@@ -406,9 +471,23 @@ struct LibraryView: View {
         }
     }
 
-    private func loadTotalCount() async {
-        guard let db = appState.databaseService else { return }
-        lib.totalAll = (try? db.fetchTotalWordCount()) ?? 0
+    /// Refresh the cached unit ranges for the active book. Cheap (one
+    /// SELECT, ~13K rows × one column) and only fires on book change /
+    /// unitSize change / first appear.
+    private func reloadUnitRanges() async {
+        guard let db = appState.databaseService,
+              let bookId = lib.selectedBookId else {
+            lib.unitRanges = []
+            return
+        }
+        let size = appState.settings.unitSize
+        lib.unitRanges = (try? db.fetchUnitRanges(bookId: bookId, unitSize: size)) ?? []
+        // If the user had selected a unit that no longer exists (book
+        // changed, unitSize shrunk), clear it.
+        if let idx = lib.selectedUnitIndex,
+           !lib.unitRanges.contains(where: { $0.index == idx }) {
+            lib.selectedUnitIndex = nil
+        }
     }
 
     private func reload() async {
@@ -418,29 +497,43 @@ struct LibraryView: View {
 
         let search = lib.debouncedSearch.isEmpty ? nil : lib.debouncedSearch
         do {
-            let count = try db.fetchWordSummaryCount(
+            // Effective filters depend on whether we're in Unit mode.
+            // In Unit mode the State picker is hidden, so we always
+            // query .all (the unit IS the slice).
+            let effectiveState: WordStateFilter = inUnitMode ? .all : lib.selectedState
+            // Sort is forced to .bookOrder in Unit mode for the same
+            // reason the picker hides.
+            let effectiveSort: WordSort = inUnitMode ? .bookOrder : lib.selectedSort
+
+            // No limit — read full matching set, SwiftUI List recycles.
+            var page = try db.fetchWordSummaries(
                 book: lib.selectedBookId,
-                state: lib.selectedState,
-                search: search
-            )
-            let page = try db.fetchWordSummaries(
-                book: lib.selectedBookId,
-                state: lib.selectedState,
+                state: effectiveState,
                 search: search,
-                sort: lib.selectedSort,
-                limit: pageSize,
+                sort: effectiveSort,
+                limit: nil,
                 offset: 0
             )
+
+            // In Unit mode, slice the loaded set to the unit's range.
+            // We could push the slice into SQL via OFFSET/LIMIT on the
+            // book-ordered query, but the search/state-filter
+            // interaction would make that fragile — and the full set is
+            // already in memory. Slicing in Swift keeps the SQL clean.
+            if inUnitMode, let unit = selectedUnit {
+                page = sliceForUnit(page, unit: unit)
+            }
+
+            let count = page.count
             // Refresh the jump-bar's "available letters" set — used to dim
             // letters with zero matches under the current filters.
             let letters = (try? db.availableStartingLetters(
                 book: lib.selectedBookId,
-                state: lib.selectedState,
+                state: effectiveState,
                 search: search
             )) ?? []
             lib.totalMatching = count
             lib.summaries = page
-            lib.loadedCount = page.count
             lib.availableLetters = letters
 
             // Drop selection if the selected word is no longer in the page.
@@ -451,72 +544,37 @@ struct LibraryView: View {
             print("Library reload failed: \(error)")
             lib.summaries = []
             lib.totalMatching = 0
-            lib.loadedCount = 0
             lib.availableLetters = []
         }
     }
 
-    /// Jump to the first row whose spelling starts with `letter`. If the
-    /// current sort isn't alphabetical, switch to it first (the jump bar
-    /// only makes sense alphabetized). Loads a page starting at the
-    /// computed offset; "Load More" then continues from there.
-    private func jumpToLetter(_ letter: Character) {
-        Task {
-            guard let db = appState.databaseService else { return }
-            // Force alphabetical if we're not already there. Reload happens
-            // automatically via the .onChange(selectedSort) listener.
-            if lib.selectedSort != .alphabetical {
-                lib.selectedSort = .alphabetical
-                // Wait one tick for the .onChange-driven reload to start so
-                // we don't race with it.
-                try? await Task.sleep(nanoseconds: 50_000_000)
-            }
-            let search = lib.debouncedSearch.isEmpty ? nil : lib.debouncedSearch
-            guard let offset = try? db.offsetForFirstSpelling(
-                startingWith: letter,
-                book: lib.selectedBookId,
-                state: lib.selectedState,
-                search: search
-            ) else { return }
-            // Reload the page starting at that offset. We treat this like
-            // a fresh page (loadedCount = pageSize), not a Load-More
-            // append, so the user sees only the relevant slice.
-            do {
-                let page = try db.fetchWordSummaries(
-                    book: lib.selectedBookId,
-                    state: lib.selectedState,
-                    search: search,
-                    sort: .alphabetical,
-                    limit: pageSize,
-                    offset: offset
-                )
-                lib.summaries = page
-                // After a jump, "Load More" should continue from where the
-                // jumped page ended.
-                lib.loadedCount = offset + page.count
-            } catch {
-                print("Library jumpToLetter failed: \(error)")
-            }
+    /// Slice a book-ordered summary list down to the given unit's range.
+    /// We look up the unit's `firstSpelling` in the page (book-ordered,
+    /// possibly state/search-filtered) and take a contiguous window
+    /// from there. If `lastSpelling` falls within `count` rows we end
+    /// there; otherwise we truncate at `firstIdx + count`. Search/State
+    /// filtering can shrink the slice — that's the desired behavior:
+    /// "Unit 5 + State New" = "new words within Unit 5's range."
+    private func sliceForUnit(_ page: [WordSummary], unit: DatabaseService.UnitRange) -> [WordSummary] {
+        guard let firstIdx = page.firstIndex(where: { $0.spelling == unit.firstSpelling }) else {
+            return []
         }
+        let endCap = min(firstIdx + unit.count, page.count)
+        if let lastIdxInWindow = page[firstIdx..<endCap].firstIndex(where: { $0.spelling == unit.lastSpelling }) {
+            return Array(page[firstIdx...lastIdxInWindow])
+        }
+        return Array(page[firstIdx..<endCap])
     }
 
-    private func loadMore() async {
-        guard let db = appState.databaseService else { return }
-        lib.isLoading = true
-        defer { lib.isLoading = false }
-        do {
-            let page = try db.fetchWordSummaries(
-                book: lib.selectedBookId,
-                state: lib.selectedState,
-                search: lib.debouncedSearch.isEmpty ? nil : lib.debouncedSearch,
-                sort: lib.selectedSort,
-                limit: pageSize,
-                offset: lib.loadedCount
-            )
-            lib.summaries.append(contentsOf: page)
-            lib.loadedCount += page.count
-        } catch {
-            print("Library loadMore failed: \(error)")
+    /// Jump to the first row whose spelling starts with `letter`.
+    /// Only meaningful under .alphabetical sort (the bar only shows
+    /// then). We scroll to the row by setting selection — SwiftUI List
+    /// auto-scrolls to keep the selection visible.
+    private func jumpToLetter(_ letter: Character) {
+        guard lib.selectedSort == .alphabetical else { return }
+        let key = String(letter).lowercased()
+        if let target = lib.summaries.first(where: { $0.spelling.lowercased().hasPrefix(key) }) {
+            lib.selectedWordId = target.id
         }
     }
 
@@ -535,17 +593,15 @@ struct LibraryView: View {
             lib.selectedFullWord = nil
         }
     }
-
-    private let pageSize: Int = 200
 }
 
 // MARK: - AlphabetJumpBar
 //
 // Vertical strip of A-Z letters between the list pane and the resizable
-// divider. Click a letter → LibraryView jumps the page to that letter's
-// first row (forcing alphabetical sort if not already). Letters with zero
-// matches under the current filters are dimmed so the user only chases
-// jumps that will land somewhere.
+// divider. Only mounted when sort = .alphabetical. Click a letter →
+// LibraryView selects that letter's first row (List auto-scrolls).
+// Letters with zero matches under the current filters are dimmed so the
+// user only chases jumps that will land somewhere.
 
 private struct AlphabetJumpBar: View {
     @Environment(AppState.self) private var appState
