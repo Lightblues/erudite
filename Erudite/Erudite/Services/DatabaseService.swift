@@ -1487,6 +1487,112 @@ nonisolated final class DatabaseService: Sendable {
 
     // MARK: - Word-centric queries (for WordDetailView)
 
+    // MARK: - Today's Activity Stats
+    //
+    // "What did I do today?" — surfaced as an inline strip on Today.
+    //
+    // Returns four numbers from reviewLog + typingLog since the start
+    // of the local day:
+    //
+    // - flashcardSessions  : count of distinct Flashcard sessions
+    // - typingSessions     : count of distinct Typing sessions
+    // - wordsReviewed      : distinct wordIds rated today (Flashcard)
+    // - newWordsLearned    : distinct wordIds whose FIRST rating today
+    //                        was given to a card in `.new` state
+    //                        (reviewLog.state == 0)
+    //
+    // Sessions are inferred — we don't open/close a session row in the
+    // DB — by clustering events with timestamp gaps less than 30
+    // minutes. Two ratings 5 minutes apart = same session; 45 minutes
+    // apart = two sessions. Same gap rule for typingLog. The 30-min
+    // threshold is empirical: shorter than a typical "I'll practice for
+    // a bit" arc, longer than a quick mode-switch.
+
+    nonisolated struct TodayActivityStats: Sendable, Hashable {
+        let flashcardSessions: Int
+        let typingSessions: Int
+        let wordsReviewed: Int
+        let newWordsLearned: Int
+
+        var isEmpty: Bool {
+            flashcardSessions == 0 && typingSessions == 0
+                && wordsReviewed == 0 && newWordsLearned == 0
+        }
+    }
+
+    func fetchTodayActivityStats(now: Date = Date()) throws -> TodayActivityStats {
+        let cal = Calendar.current
+        let startOfToday = cal.startOfDay(for: now)
+        // 30-minute gap. Above this gap a new session boundary is drawn.
+        let sessionGap: TimeInterval = 30 * 60
+        return try dbQueue.read { db in
+            // ---- Flashcard side: sessions + words ----
+            let flashTimes = try Date.fetchAll(db, sql: """
+                SELECT timestamp FROM reviewLog
+                WHERE timestamp >= ?
+                ORDER BY timestamp ASC
+                """, arguments: [startOfToday])
+            let flashcardSessions = clusterCount(flashTimes, gap: sessionGap)
+
+            // wordsReviewed = distinct wordIds rated today (any rating).
+            // Join reviewLog→reviewCard to get wordId since reviewLog
+            // doesn't carry it directly.
+            let wordsReviewed = try Int.fetchOne(db, sql: """
+                SELECT COUNT(DISTINCT rc.wordId)
+                FROM reviewLog rl
+                JOIN reviewCard rc ON rc.id = rl.cardId
+                WHERE rl.timestamp >= ?
+                """, arguments: [startOfToday]) ?? 0
+
+            // newWordsLearned = distinct wordIds whose rating-today was
+            // given on a card that was `.new` at the time of rating
+            // (reviewLog.state == 0). The same word can have follow-up
+            // ratings later in the day (state would be `.learning` then),
+            // so we use the rows where state == 0 to mean "this is the
+            // bootstrap rating, the moment we count it as introduced".
+            let newWordsLearned = try Int.fetchOne(db, sql: """
+                SELECT COUNT(DISTINCT rc.wordId)
+                FROM reviewLog rl
+                JOIN reviewCard rc ON rc.id = rl.cardId
+                WHERE rl.timestamp >= ? AND rl.state = 0
+                """, arguments: [startOfToday]) ?? 0
+
+            // ---- Typing side: sessions only (we already count words
+            //      via wordsReviewed if there was a Flashcard rating;
+            //      pure-typing word counts go into wordsReviewed via
+            //      the recap query, not here — this strip is about
+            //      "study activity," not "all words touched"). ----
+            let typingTimes = try Date.fetchAll(db, sql: """
+                SELECT timestamp FROM typingLog
+                WHERE timestamp >= ?
+                ORDER BY timestamp ASC
+                """, arguments: [startOfToday])
+            let typingSessions = clusterCount(typingTimes, gap: sessionGap)
+
+            return TodayActivityStats(
+                flashcardSessions: flashcardSessions,
+                typingSessions: typingSessions,
+                wordsReviewed: wordsReviewed,
+                newWordsLearned: newWordsLearned
+            )
+        }
+    }
+
+    /// Count how many "sessions" a sorted timestamp array represents,
+    /// where two consecutive timestamps less than `gap` seconds apart
+    /// belong to the same session. Empty array → 0; a single
+    /// timestamp → 1.
+    private func clusterCount(_ times: [Date], gap: TimeInterval) -> Int {
+        guard !times.isEmpty else { return 0 }
+        var count = 1
+        for i in 1..<times.count {
+            if times[i].timeIntervalSince(times[i - 1]) >= gap {
+                count += 1
+            }
+        }
+        return count
+    }
+
     // MARK: - Today's Recap
     //
     // "What words did I study today, and how did it go?"
