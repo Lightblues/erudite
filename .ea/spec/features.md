@@ -566,6 +566,12 @@ AI recommends the optimal mode based on:
 
 ## 4. Word Library (词库)
 
+Library answers **one** question: "browse this app's words." Everything
+else is a **slice** on that list — Book, Unit, State, Sort, Search are
+peer filters; they don't open separate views. Practice (Flashcard /
+Typing) is an **action** on the current slice via footer buttons, not
+a parallel mode.
+
 ### Layout
 
 Mail-style split when the window is wide enough (≥ 900pt), single-column
@@ -573,7 +579,7 @@ push navigation otherwise. Layout selection is automatic via `GeometryReader`.
 
 ```
 ┌── Library (wide) ───────────────────────────────────────────┐
-│ [search] [Book ▾] [State ▾] [Sort ▾]                        │
+│ [search] [Book ▾] [Unit ▾] [State ▾] [Sort ▾]               │
 │ ─────────────────────────────────────────────────────────── │
 │  aberrant     /æˈber.ənt/ adj 异常的    Review   │ aberrant │
 │  coalesce     ...          v   联合     Learning │ /æˈber/  │
@@ -581,7 +587,25 @@ push navigation otherwise. Layout selection is automatic via `GeometryReader`.
 │  garrulous    ...          adj 啰嗦的   New      │ Learning │
 │  ⋯                                                │ Progress │
 │                                                  │ ⋯        │
-│ Showing 200 of 13,422 · [Load More]              │          │
+│ Showing 13,422                                   │          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+When a Unit is picked, the header collapses to `[search] [Book] [Unit]`
+(State + Sort are redundant inside a single unit) and the footer
+becomes an action surface:
+
+```
+┌── Library · Unit 5 ─────────────────────────────────────────┐
+│ [search] [Book ▾] [Unit: 5 (efflorescent — embellish) ▾]    │
+│ ─────────────────────────────────────────────────────────── │
+│  efflorescent  ...                       New                │
+│  effrontery    ...                       New                │
+│  effusive      ...                       Learning           │
+│  ⋯                                                          │
+│ ─────────────────────────────────────────────────────────── │
+│ efflorescent — embellish    [▭ Flashcard]  [⌨ Typing]       │
+│ ● 0 Mastered  ● 1 Review  ● 2 Learning  ● 9 New   12 words  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -594,17 +618,52 @@ Backed by `WordSummary` projections; see `data.md`.
 - **Book filter** (defaults to active study book; two-way synced with
   `AppState.activeBookId` so Today / Plan / Library always agree on the
   current book): `INNER JOIN wordListEntry`.
-- **State filter**: New / Learning / Review / Mature (Mature ≈ Review +
-  stability ≥ 21d).
-- **Sort**: Book Order (default when a book is selected — uses
-  `wordListEntry.sortOrder`) / A→Z / Due date / Most lapses. Without a
-  book picked, Book Order silently falls back to A→Z.
-- **Pagination**: 200/page with a Load More button (no infinite scroll).
-  An A-Z jump bar between the list and the resizable divider lets the user
-  jump-paginate to any starting letter; clicking a letter forces
-  alphabetical sort if not already and loads the page starting at the
-  computed offset. Letters with zero matches under current filters are
-  dimmed.
+- **Unit picker** (only when a Book is selected): "All units" or one of
+  the book's `unitSize`-row slices, labeled with the slice's first and
+  last spelling — "Unit 5 (efflorescent — embellish)". Backed by
+  `DatabaseService.fetchUnitRanges(bookId:unitSize:)`. Selecting Unit ≠
+  All hides the State + Sort pickers (the unit IS the slice; per-row
+  state badges remain) and forces the SQL to `state: .all, sort:
+  .bookOrder` so the unit's natural order is preserved. The Swift-side
+  `sliceForUnit` then narrows the loaded set to the unit's
+  `firstSpelling..lastSpelling` window — Search still cuts within that
+  window if active.
+- **State filter** (Book mode only): New / Learning / Review / Mature.
+- **Sort** (Book mode only): Book Order (default when a book is
+  selected — uses `wordListEntry.sortOrder`) / A→Z. Without a book
+  picked, Book Order silently falls back to A→Z. Sort cases for
+  `dueDate` and `lapses` were removed in erudite-31 — Plan's
+  `[Today][Tomorrow]` tabs and Today's recap own those signals now.
+
+### A-Z jump bar
+
+Vertical 26-letter strip between the list pane and the resizable
+divider, **mounted only when sort = .alphabetical** (was always-on
+before; meaningless under Book Order, which is its default sort
+when a book is selected). Click a letter → first matching row gets
+selected; SwiftUI List auto-scrolls. Letters with zero matches
+under current filters are dimmed.
+
+### No pagination
+
+Library reads the full matching slice in one SQL hit and lets
+SwiftUI List recycle rows lazily. 13K rows render fine. The
+prior "200 per page + Load More" model was removed in erudite-31
+because pagination + jump-bar were two overlapping "position"
+mental models — picking one path resolves the conflict.
+
+### Footer
+
+Two flavors:
+
+- **Book mode** (no unit selected): thin status line "Showing N".
+- **Unit mode** (unit selected): shows the unit's spelling range +
+  `[▭ Flashcard]` `[⌨ Typing]` direct-start action buttons + a row
+  of progress chips (Mastered / Review / Learning / New, derived
+  from `summaries.cardState`). Pressing a button builds the unit
+  via `StudyQueueBuilder.buildChapterUnit` and pins it to AppState
+  via `startUnit(unit, in:)` — no UnitPreview detour, the user
+  just saw the words in the list.
 
 ### Resizable split + persistent state
 
@@ -612,14 +671,11 @@ Backed by `WordSummary` projections; see `data.md`.
   (draggable 280–600pt via the divider's hit-region), detail fills the
   remainder. The list width is persisted to `UserDefaults` so it survives
   restarts.
-- All Library "live state" (loaded summaries, pagination offset,
-  selection, filter pickers, list pane width) lives in `LibraryState`
-  (`@Observable`, owned by `AppState`). Switching tabs and coming back
-  preserves position — the user doesn't snap back to "abacus" every
-  time.
-- The list row shows context-aware trailing labels: when sorted by Due
-  Date, the trailing column shows `today` / `2d late` / `in 3d`; when
-  sorted by Most Lapses, it shows `L:N` for cards that have lapsed.
+- All Library "live state" (loaded summaries, selection, filter
+  pickers, selected unit index, list pane width) lives in
+  `LibraryState` (`@Observable`, owned by `AppState`). Switching tabs
+  and coming back preserves position — the user doesn't snap back to
+  "abacus" every time.
 - The lightbulb in row trailings is **purple, only when the user has
   authored their own mnemonic** (a `user_content` row of type
   `mnemonic`). Builtin mnemonics now have ~100% coverage so a generic

@@ -728,3 +728,56 @@ automatically the moment the upstream types compiled cleanly.
   from the API alone? If yes, the boundary is right. If the
   view has to compose two API calls or apply business rules to
   display a number, the API is too thin.
+
+### "Modes" are usually wrong abstractions for slices
+- **Symptom:** erudite-29 shipped Library with a `[Words | Chapters]`
+  segmented mode toggle. Inside "Chapters" the UI was completely
+  different (chapter cards instead of word rows; no search, no
+  sort, no filters; sheet-based interaction). User feedback:
+  "I can't see what's in each Unit, I'm picking blind. And the
+  two modes don't share UI."
+- **Diagnosis:** "Chapters" wasn't a different mode — it was a
+  different **slice** on the same word list. We shouldn't have
+  switched the whole UI; we should have added one more picker
+  alongside Book / State / Sort.
+- **Fix:** Removed the `viewMode` toggle entirely. Added a `Unit`
+  picker in the header that sits next to Book ("All units" /
+  "Unit 5 (efflorescent — embellish)"). Selecting a unit narrows
+  the same word list, hides State + Sort (redundant inside one
+  unit), and surfaces footer action buttons.
+- **Takeaway:** When you're tempted to add a "mode toggle," ask:
+  is this actually a different *view* of the data, or just a
+  different *slice* of it? If a slice, add a filter, don't fork
+  the UI. The smell: when both modes need search, both modes
+  need filters, both modes need the same row design — they're
+  the same view, you just sliced wrong.
+
+### Action buttons in the footer eliminate "what will study consume?"
+- **Symptom:** When unit study lived behind the chaptersListPane
+  cards, the user had to mentally connect "the words shown in
+  this picker thumbnail = the words I'll study." With the new
+  Unit picker, they're already looking at the exact list.
+- **Fix:** Footer buttons `[Flashcard]` `[Typing]` consume "the
+  list above this footer." The slice is whatever the user
+  configured: Unit + State + Search compose, and the buttons
+  always operate on the visible result.
+- **Takeaway:** When study/practice/action buttons sit next to a
+  list, the list IS the spec. The user doesn't have to imagine
+  what they're committing to — they're seeing it. This kills a
+  whole class of "wait, what does this button do?" questions.
+
+### The jump-bar belongs to alphabetical sort, not to the page
+- **Symptom:** A-Z jump bar was always mounted in Library's split
+  layout. Under Book Order sort, clicking 'M' triggered an
+  implicit sort-flip to alphabetical, then loaded a different
+  offset. Two surprises: sort changed under the user, and the
+  page reflowed unexpectedly.
+- **Fix:** Mount the bar only when `sort == .alphabetical`. Drop
+  the implicit sort-flip in `jumpToLetter`. Now the bar's
+  presence signals "alphabetical jump available"; its absence
+  under Book Order is the correct UX (because by-letter jumping
+  in book order is meaningless).
+- **Takeaway:** UI affordances should attach to the context that
+  makes them meaningful, not to the page that contains them.
+  When a control needs an implicit mode-flip to "make sense,"
+  it doesn't belong in that mode in the first place.
