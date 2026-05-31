@@ -1487,6 +1487,146 @@ nonisolated final class DatabaseService: Sendable {
 
     // MARK: - Word-centric queries (for WordDetailView)
 
+    // MARK: - Today's Recap
+    //
+    // "What words did I study today, and how did it go?"
+    //
+    // Used by Today's recap section. Unions reviewLog (Flashcard ratings)
+    // and typingLog (typed-word completions) since the start of the local
+    // day, aggregates per word: latest rating, total mistakes (typing),
+    // attempt count.
+    //
+    // Sort order: words with worst signal first (Again > Hard > many
+    // mistakes > Good). The user's eye should land on what they need to
+    // re-look-at.
+
+    nonisolated struct RecapEntry: Identifiable, Sendable, Hashable {
+        let wordId: String
+        let spelling: String
+        let firstDefZh: String?
+        /// Latest Flashcard rating today, or nil if only typed.
+        let latestRating: Rating?
+        /// Sum of typing mistakes today (0 if not typed).
+        let typingMistakes: Int
+        /// Total events today (Flashcard ratings + typing completions).
+        let attempts: Int
+
+        var id: String { wordId }
+
+        /// Lower = "more pressing", used for sort.
+        /// Again 0, lapses-with-rating 5, Hard 10, many mistakes 15, Good 20, Easy 25.
+        var pressingScore: Int {
+            // Again is the worst.
+            if latestRating == .again { return 0 }
+            // Lots of mistakes (Typing) without a rating: still bad.
+            if latestRating == nil && typingMistakes >= 3 { return 5 }
+            if latestRating == .hard { return 10 }
+            if latestRating == nil && typingMistakes > 0 { return 15 }
+            if latestRating == .good { return 20 }
+            if latestRating == .easy { return 25 }
+            return 30
+        }
+    }
+
+    func fetchTodayRecap(now: Date = Date()) throws -> [RecapEntry] {
+        let cal = Calendar.current
+        let startOfToday = cal.startOfDay(for: now)
+        return try dbQueue.read { db in
+            // 1) Pull today's Flashcard ratings: per word, the latest rating.
+            //    GROUP BY wordId, MAX(timestamp).
+            let ratingRows = try Row.fetchAll(db, sql: """
+                SELECT
+                  rc.wordId AS wordId,
+                  rl.rating AS latestRating,
+                  COUNT(*) AS ratingCount,
+                  MAX(rl.timestamp) AS lastTime
+                FROM reviewLog rl
+                JOIN reviewCard rc ON rc.id = rl.cardId
+                WHERE rl.timestamp >= ?
+                GROUP BY rc.wordId
+                """, arguments: [startOfToday])
+
+            // For each wordId, the latest rating: a second pass since SQLite
+            // doesn't have arg_max in JSON1.
+            var latestRatingByWord: [String: Int] = [:]
+            var ratingCountByWord: [String: Int] = [:]
+            for row in ratingRows {
+                let wid: String = row["wordId"]
+                let lr = try Int.fetchOne(db, sql: """
+                    SELECT rl.rating FROM reviewLog rl
+                    JOIN reviewCard rc ON rc.id = rl.cardId
+                    WHERE rc.wordId = ? AND rl.timestamp >= ?
+                    ORDER BY rl.timestamp DESC LIMIT 1
+                    """, arguments: [wid, startOfToday])
+                latestRatingByWord[wid] = lr
+                ratingCountByWord[wid] = (row["ratingCount"] as Int?) ?? 0
+            }
+
+            // 2) Pull today's typing logs.
+            let typingRows = try Row.fetchAll(db, sql: """
+                SELECT
+                  wordId,
+                  SUM(mistakes) AS totalMistakes,
+                  COUNT(*) AS attemptCount
+                FROM typingLog
+                WHERE timestamp >= ?
+                GROUP BY wordId
+                """, arguments: [startOfToday])
+
+            var typingMistakesByWord: [String: Int] = [:]
+            var typingCountByWord: [String: Int] = [:]
+            for row in typingRows {
+                let wid: String = row["wordId"]
+                typingMistakesByWord[wid] = row["totalMistakes"] ?? 0
+                typingCountByWord[wid] = row["attemptCount"] ?? 0
+            }
+
+            // 3) Union all touched wordIds, fetch their spelling + first
+            //    Chinese def in one shot. We use the projection SQL to
+            //    avoid decoding the full Word JSON.
+            let touched = Set(latestRatingByWord.keys).union(typingMistakesByWord.keys)
+            guard !touched.isEmpty else { return [] }
+
+            // SQLite IN expects a literal list — bind as N placeholders.
+            let placeholders = Array(repeating: "?", count: touched.count).joined(separator: ",")
+            let args = StatementArguments(Array(touched))
+            let wordRows = try Row.fetchAll(db, sql: """
+                SELECT
+                  w.id AS id,
+                  w.spelling AS spelling,
+                  json_extract(w.data, '$.definitions[0].chinese') AS firstDefZh
+                FROM word w
+                WHERE w.id IN (\(placeholders))
+                """, arguments: args)
+
+            var entries: [RecapEntry] = []
+            for row in wordRows {
+                let wid: String = row["id"]
+                let ratingRaw = latestRatingByWord[wid]
+                let rating = ratingRaw.flatMap { Rating(rawValue: $0) }
+                let typing = typingMistakesByWord[wid] ?? 0
+                let attempts = (ratingCountByWord[wid] ?? 0) + (typingCountByWord[wid] ?? 0)
+                entries.append(RecapEntry(
+                    wordId: wid,
+                    spelling: row["spelling"],
+                    firstDefZh: row["firstDefZh"],
+                    latestRating: rating,
+                    typingMistakes: typing,
+                    attempts: attempts
+                ))
+            }
+
+            // Sort by pressingScore (worst first), then alphabetical.
+            entries.sort { a, b in
+                if a.pressingScore != b.pressingScore {
+                    return a.pressingScore < b.pressingScore
+                }
+                return a.spelling.lowercased() < b.spelling.lowercased()
+            }
+            return entries
+        }
+    }
+
     /// The (single) review card for a word, or nil if none has been created.
     func fetchReviewCard(forWord wordId: String) throws -> ReviewCard? {
         try dbQueue.read { db in

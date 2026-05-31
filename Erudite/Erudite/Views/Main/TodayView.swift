@@ -18,6 +18,7 @@ struct TodayView: View {
     @State private var dueSummaries: [WordSummary] = []
     @State private var newSummaries: [WordSummary] = []
     @State private var todayUnits: [StudyUnit] = []
+    @State private var recapEntries: [DatabaseService.RecapEntry] = []
     @State private var previewUnit: StudyUnit?
     @State private var isLoading: Bool = false
 
@@ -39,7 +40,13 @@ struct TodayView: View {
                     bookProgress(book: book)
                 }
 
-                unitsSection
+                homeworkSection
+
+                if !recapEntries.isEmpty {
+                    Divider()
+                        .padding(.horizontal, 32)
+                    recapSection
+                }
 
                 Divider()
                     .padding(.horizontal, 32)
@@ -175,127 +182,67 @@ struct TodayView: View {
         .frame(maxWidth: 480)
     }
 
-    // MARK: - Today's Plan (Unit selector)
+    // MARK: - Today's homework (FSRS-driven only)
     //
-    // Replaces the old [Start Learning][Review Due][Type Practice] button
-    // strip. Shows the FSRS-driven units for today: each row is one chunk
-    // of due reviews (size = appState.settings.unitSize) plus a "New
-    // words" unit and an optional Book Chapter shortcut. Tapping a unit
-    // opens UnitPreviewView (sheet); from there the user picks Flashcard
-    // or Typing.
+    // The list of FSRS-driven study units the user can pick from today.
+    // Book Chapters are NOT shown here — they live in Library now under
+    // its Chapter view. "Homework" is a stricter promise: this is what
+    // the scheduler says you need to do today.
+
+    private var homeworkSection: some View {
+        UnitPickerView(
+            units: todayUnits,
+            onPick: { previewUnit = $0 },
+            header: "Today's homework",
+            emptyTitle: "All caught up!",
+            emptyMessage: "No reviews due. New words will appear when the queue refreshes."
+        )
+        .frame(maxWidth: 640)
+    }
+
+    // MARK: - Today's recap
+    //
+    // List of words touched today via Flashcard rating or Typing
+    // completion, sorted "worst first" so the user's eye lands on what
+    // needs another look. Tapping a row opens a popover with the full
+    // word card.
 
     @ViewBuilder
-    private var unitsSection: some View {
-        if todayUnits.isEmpty && bookChapterUnit() == nil {
-            allCaughtUp
-        } else {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Today's plan")
-                        .font(.headline)
-                    Spacer()
-                    Text(planSummaryLabel)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                VStack(spacing: 6) {
-                    ForEach(todayUnits) { unit in
-                        unitRow(unit)
-                    }
-                    if let chapter = bookChapterUnit() {
-                        unitRow(chapter)
-                    }
-                }
-            }
-            .frame(maxWidth: 640)
-        }
-    }
-
-    private var allCaughtUp: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "checkmark.seal.fill")
-                .font(.title2)
-                .foregroundStyle(.green)
-            Text("All caught up — no units due.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            Text("New words will appear when the queue refreshes.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-        }
-        .padding(.vertical, 24)
-        .frame(maxWidth: .infinity)
-    }
-
-    /// "4 units · ~25 min" / "1 unit · ~5 min"
-    private var planSummaryLabel: String {
-        let total = todayUnits.count + (bookChapterUnit() == nil ? 0 : 1)
-        let minutes = todayUnits.reduce(0) { $0 + $1.estimatedMinutes }
-            + (bookChapterUnit()?.estimatedMinutes ?? 0)
-        guard total > 0 else { return "" }
-        return "\(total) unit\(total == 1 ? "" : "s") · ~\(minutes) min"
-    }
-
-    private func unitRow(_ unit: StudyUnit) -> some View {
-        Button {
-            previewUnit = unit
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: unit.kind.icon)
-                    .foregroundStyle(unitColor(unit.kind.color))
-                    .font(.title3)
-                    .frame(width: 28)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(unit.title)
-                        .font(.subheadline.weight(.semibold))
-                    Text(unit.subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+    private var recapSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Today's recap")
+                    .font(.headline)
                 Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
+                Text(recapSummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+
+            VStack(spacing: 0) {
+                ForEach(recapEntries) { entry in
+                    RecapRow(entry: entry)
+                    if entry.id != recapEntries.last?.id {
+                        Divider()
+                    }
+                }
+            }
             .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(.quaternary, lineWidth: 0.5)
             )
-            .contentShape(RoundedRectangle(cornerRadius: 10))
         }
-        .buttonStyle(.plain)
+        .frame(maxWidth: 640)
     }
 
-    /// Optional: the next unstudied chapter of the active book. Currently
-    /// always returns the chapter starting at `chapterIndex * unitSize` for
-    /// chapter index 0 — i.e. the first chapter of the book — to give the
-    /// user a "browse the book in order" entry point. Future: track
-    /// per-book chapterProgress so this returns the *next* unfinished
-    /// chapter.
-    private func bookChapterUnit() -> StudyUnit? {
-        guard
-            let bookId = appState.activeBookId,
-            let db = appState.databaseService
-        else { return nil }
-        let builder = StudyQueueBuilder(db: db)
-        return try? builder.buildChapterUnit(
-            bookId: bookId,
-            chapterIndex: 0,
-            chapterSize: appState.settings.unitSize
-        )
-    }
-
-    private func unitColor(_ name: StudyUnit.ColorName) -> Color {
-        switch name {
-        case .orange: .orange
-        case .blue: .blue
-        case .purple: .purple
-        case .indigo: .indigo
+    private var recapSummary: String {
+        let totalWords = recapEntries.count
+        let again = recapEntries.filter { $0.latestRating == .again }.count
+        if again > 0 {
+            return "\(totalWords) words · \(again) need another look"
         }
+        return "\(totalWords) words touched today"
     }
 
     // MARK: - Two-column preview
@@ -405,11 +352,14 @@ struct TodayView: View {
                 bookId: appState.activeBookId,
                 unitSize: appState.settings.unitSize
             )) ?? []
+
+            self.recapEntries = (try? db.fetchTodayRecap()) ?? []
         } catch {
             print("Today reload failed: \(error)")
             self.dueSummaries = []
             self.newSummaries = []
             self.todayUnits = []
+            self.recapEntries = []
         }
     }
 }
@@ -419,6 +369,89 @@ struct TodayView: View {
 // A tappable row used inside Today's two columns. Tapping opens a popover
 // with the full word detail (looked up lazily) so users can peek without
 // leaving the home page.
+
+// MARK: - Recap Row
+//
+// One row in the "Today's recap" list. Shows spelling + chinese def + a
+// pressing-signal badge (Again × N / Hard / N mistakes / Good).
+// Tapping opens a popover with the full word card so the user can
+// re-look-at problem words without leaving Today.
+
+private struct RecapRow: View {
+    @Environment(AppState.self) private var appState
+    let entry: DatabaseService.RecapEntry
+
+    @State private var showPopover: Bool = false
+    @State private var fullWord: Word?
+
+    var body: some View {
+        Button {
+            showPopover = true
+            Task { await loadWord() }
+        } label: {
+            HStack(spacing: 10) {
+                badge
+                    .frame(width: 64, alignment: .leading)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(entry.spelling)
+                        .font(.subheadline.weight(.semibold))
+                    if let def = entry.firstDefZh {
+                        Text(def)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 8)
+                if entry.attempts > 1 {
+                    Text("× \(entry.attempts)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showPopover) {
+            if let word = fullWord {
+                WordPopoverView(word: word) { showPopover = false }
+            } else {
+                ProgressView().padding(40)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var badge: some View {
+        let (color, label): (Color, String) = badgeFor(entry)
+        Text(label)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.15), in: Capsule())
+    }
+
+    private func badgeFor(_ e: DatabaseService.RecapEntry) -> (Color, String) {
+        if e.latestRating == .again { return (.red, "Again") }
+        if e.latestRating == .hard { return (.orange, "Hard") }
+        if e.latestRating == .good { return (.green, "Good") }
+        if e.latestRating == .easy { return (.blue, "Easy") }
+        // Typing-only paths
+        if e.typingMistakes >= 3 { return (.red, "\(e.typingMistakes) miss") }
+        if e.typingMistakes > 0 { return (.orange, "\(e.typingMistakes) miss") }
+        return (.green, "Typed")
+    }
+
+    private func loadWord() async {
+        guard fullWord == nil, let db = appState.databaseService else { return }
+        if let w = try? db.fetchWord(id: entry.wordId) {
+            fullWord = w
+        }
+    }
+}
 
 private struct PreviewRow: View {
     @Environment(AppState.self) private var appState
