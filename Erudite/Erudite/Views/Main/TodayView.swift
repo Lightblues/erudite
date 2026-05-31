@@ -5,24 +5,31 @@ import SwiftUI
 // Layout (top → bottom):
 //   1. Greeting + date
 //   2. Book picker + inline stat strip + progress bar
-//   3. Quick action buttons
-//   4. Two-column preview (Reviews | New) — main information density
+//   3. Today's homework  (FSRS-driven units the user can pick from)
+//   4. Today's recap     (multi-select operation panel for re-practice)
 //
-// All preview rows are WordSummary-driven; clicking a row opens a popover
-// with the full word detail (lazy lookup). The previous "All caught up!"
-// card is gone — empty columns show a small inline message instead.
+// Today is *only* a today-view: what to do, what's been done, what to
+// re-practice. Future-due words and the new-word queue belong on Plan;
+// they used to live here as a two-column preview but that overlapped
+// Plan's own lists and pushed recap below the fold.
+//
+// The recap section doubles as an operation panel: each row has a
+// checkbox (default = needsWork). The bottom CTA pulls the selected
+// rows into a StudyQueueBuilder.buildRecapUnit unit (kind = .recap)
+// and opens the same UnitPreview sheet the homework rows use. Recap
+// sessions don't write back to FSRS (see StudyUnit.Kind.recap).
 
 struct TodayView: View {
     @Environment(AppState.self) private var appState
 
-    @State private var dueSummaries: [WordSummary] = []
-    @State private var newSummaries: [WordSummary] = []
     @State private var todayUnits: [StudyUnit] = []
     @State private var recapEntries: [DatabaseService.RecapEntry] = []
+    /// wordIds the user has selected for re-review. Initialized to the
+    /// `needsWork` subset on each reload; the user can toggle individual
+    /// rows or hit [Select needsWork] to reset.
+    @State private var recapSelection: Set<String> = []
     @State private var previewUnit: StudyUnit?
     @State private var isLoading: Bool = false
-
-    private let previewLimit: Int = 50
 
     var body: some View {
         ScrollView {
@@ -47,11 +54,6 @@ struct TodayView: View {
                         .padding(.horizontal, 32)
                     recapSection
                 }
-
-                Divider()
-                    .padding(.horizontal, 32)
-
-                twoColumnPreview
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 24)
@@ -200,12 +202,13 @@ struct TodayView: View {
         .frame(maxWidth: 640)
     }
 
-    // MARK: - Today's recap
+    // MARK: - Today's recap (multi-select operation panel)
     //
     // List of words touched today via Flashcard rating or Typing
-    // completion, sorted "worst first" so the user's eye lands on what
-    // needs another look. Tapping a row opens a popover with the full
-    // word card.
+    // completion, sorted "worst first". Each row carries a checkbox;
+    // default selection = `needsWork` subset (Again / Hard / mistakes).
+    // The bottom CTA materializes the selection into a `.recap` unit
+    // that re-uses the same Flashcard/Typing pipeline as homework.
 
     @ViewBuilder
     private var recapSection: some View {
@@ -214,14 +217,24 @@ struct TodayView: View {
                 Text("Today's recap")
                     .font(.headline)
                 Spacer()
-                Text(recapSummary)
+                Text(recapHeaderSummary)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .monospacedDigit()
             }
 
             VStack(spacing: 0) {
                 ForEach(recapEntries) { entry in
-                    RecapRow(entry: entry)
+                    RecapRow(
+                        entry: entry,
+                        isSelected: Binding(
+                            get: { recapSelection.contains(entry.wordId) },
+                            set: { selected in
+                                if selected { recapSelection.insert(entry.wordId) }
+                                else { recapSelection.remove(entry.wordId) }
+                            }
+                        )
+                    )
                     if entry.id != recapEntries.last?.id {
                         Divider()
                     }
@@ -232,106 +245,59 @@ struct TodayView: View {
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(.quaternary, lineWidth: 0.5)
             )
+
+            recapActions
         }
         .frame(maxWidth: 640)
     }
 
-    private var recapSummary: String {
-        let totalWords = recapEntries.count
-        let again = recapEntries.filter { $0.latestRating == .again }.count
-        if again > 0 {
-            return "\(totalWords) words · \(again) need another look"
-        }
-        return "\(totalWords) words touched today"
+    private var recapHeaderSummary: String {
+        let total = recapEntries.count
+        let selected = recapSelection.count
+        return "\(selected) / \(total) selected"
     }
 
-    // MARK: - Two-column preview
-
-    private var twoColumnPreview: some View {
-        HStack(alignment: .top, spacing: 16) {
-            previewColumn(
-                title: "Reviews",
-                count: appState.dueCount,
-                summaries: dueSummaries,
-                tint: .orange,
-                emptyMessage: "No reviews due. Nice."
-            )
-
-            previewColumn(
-                title: "New",
-                count: appState.newCount,
-                summaries: newSummaries,
-                tint: .blue,
-                emptyMessage: "No new words queued."
-            )
-        }
-        .frame(maxHeight: 480)
-    }
-
+    /// Bottom row: [Re-review · K] primary + [Select needsWork] secondary
+    /// (only shown when the current selection differs from the default).
     @ViewBuilder
-    private func previewColumn(
-        title: String,
-        count: Int,
-        summaries: [WordSummary],
-        tint: Color,
-        emptyMessage: String
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Image(systemName: title == "Reviews" ? "arrow.clockwise.circle.fill" : "plus.circle.fill")
-                    .foregroundStyle(tint)
-                Text(title)
-                    .font(.headline)
-                Text("(\(count))")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if isLoading {
-                    ProgressView().controlSize(.small)
+    private var recapActions: some View {
+        let needsWorkSet = Set(recapEntries.filter(\.needsWork).map(\.wordId))
+        let selectionMatchesDefault = recapSelection == needsWorkSet
+        HStack(spacing: 10) {
+            if !selectionMatchesDefault, !needsWorkSet.isEmpty {
+                Button {
+                    recapSelection = needsWorkSet
+                } label: {
+                    Label("Select needsWork (\(needsWorkSet.count))",
+                          systemImage: "wand.and.stars")
+                        .font(.caption)
                 }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(tint.opacity(0.08))
-
-            if summaries.isEmpty {
-                VStack(spacing: 6) {
-                    Image(systemName: "checkmark.seal")
-                        .font(.title2)
-                        .foregroundStyle(.secondary)
-                    Text(emptyMessage)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                .padding(24)
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(summaries) { summary in
-                            PreviewRow(
-                                summary: summary,
-                                trailing: trailingLabel(for: summary, columnTitle: title)
-                            )
-                            Divider()
-                        }
-                    }
-                }
+            Spacer()
+            Button {
+                startRecapReview()
+            } label: {
+                Label("Re-review · \(recapSelection.count)",
+                      systemImage: "arrow.uturn.left.circle.fill")
             }
+            .buttonStyle(.borderedProminent)
+            .tint(.pink)
+            .controlSize(.regular)
+            .disabled(recapSelection.isEmpty)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.background)
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.quaternary, lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.top, 4)
     }
 
-    /// Reviews column shows "today" / "1d late" / "in 2d"; New column has no trailing.
-    private func trailingLabel(for summary: WordSummary, columnTitle: String) -> String? {
-        guard columnTitle == "Reviews", let due = summary.dueDate else { return nil }
-        return DueDateFormatter.relativeLabel(for: due)
+    private func startRecapReview() {
+        guard let db = appState.databaseService else { return }
+        let selected = recapEntries.filter { recapSelection.contains($0.wordId) }
+        guard !selected.isEmpty else { return }
+        let builder = StudyQueueBuilder(db: db)
+        if let unit = try? builder.buildRecapUnit(from: selected) {
+            previewUnit = unit
+        }
     }
 
     // MARK: - Reload
@@ -342,85 +308,94 @@ struct TodayView: View {
         defer { isLoading = false }
 
         do {
-            let due = try db.fetchDueSummaries(inBook: appState.activeBookId, limit: previewLimit)
-            let new = try db.fetchNewWordSummaries(inBook: appState.activeBookId, limit: previewLimit)
-            self.dueSummaries = due
-            self.newSummaries = new
-
             let builder = StudyQueueBuilder(db: db)
             self.todayUnits = (try? builder.buildTodayUnits(
                 bookId: appState.activeBookId,
                 unitSize: appState.settings.unitSize
             )) ?? []
 
-            self.recapEntries = (try? db.fetchTodayRecap()) ?? []
+            let entries = (try? db.fetchTodayRecap()) ?? []
+            self.recapEntries = entries
+            // Default selection: the needsWork subset — the user can
+            // still uncheck rows or [Select needsWork] to reset.
+            self.recapSelection = Set(entries.filter(\.needsWork).map(\.wordId))
         } catch {
             print("Today reload failed: \(error)")
-            self.dueSummaries = []
-            self.newSummaries = []
             self.todayUnits = []
             self.recapEntries = []
+            self.recapSelection = []
         }
     }
 }
 
-// MARK: - Preview Row
-//
-// A tappable row used inside Today's two columns. Tapping opens a popover
-// with the full word detail (looked up lazily) so users can peek without
-// leaving the home page.
-
 // MARK: - Recap Row
 //
-// One row in the "Today's recap" list. Shows spelling + chinese def + a
-// pressing-signal badge (Again × N / Hard / N mistakes / Good).
-// Tapping opens a popover with the full word card so the user can
-// re-look-at problem words without leaving Today.
+// One row in the "Today's recap" list. Shows: checkbox + spelling +
+// chinese def + a pressing-signal badge (Again / Hard / N mistakes /
+// Good / Typed). Tapping the body opens a popover with the full word
+// card; toggling the checkbox enrolls/unenrolls the row from the
+// pending re-review unit.
 
 private struct RecapRow: View {
     @Environment(AppState.self) private var appState
     let entry: DatabaseService.RecapEntry
+    @Binding var isSelected: Bool
 
     @State private var showPopover: Bool = false
     @State private var fullWord: Word?
 
     var body: some View {
-        Button {
-            showPopover = true
-            Task { await loadWord() }
-        } label: {
-            HStack(spacing: 10) {
-                badge
-                    .frame(width: 64, alignment: .leading)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(entry.spelling)
-                        .font(.subheadline.weight(.semibold))
-                    if let def = entry.firstDefZh {
-                        Text(def)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+        HStack(spacing: 10) {
+            // Checkbox: tappable target outside the popover button so
+            // toggling the selection doesn't open the popover.
+            Button {
+                isSelected.toggle()
+            } label: {
+                Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+                    .font(.body)
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                showPopover = true
+                Task { await loadWord() }
+            } label: {
+                HStack(spacing: 10) {
+                    badge
+                        .frame(width: 64, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(entry.spelling)
+                            .font(.subheadline.weight(.semibold))
+                        if let def = entry.firstDefZh {
+                            Text(def)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    if entry.attempts > 1 {
+                        Text("× \(entry.attempts)")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.tertiary)
                     }
                 }
-                Spacer(minLength: 8)
-                if entry.attempts > 1 {
-                    Text("× \(entry.attempts)")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.tertiary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $showPopover) {
+                if let word = fullWord {
+                    WordPopoverView(word: word) { showPopover = false }
+                } else {
+                    ProgressView().padding(40)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .popover(isPresented: $showPopover) {
-            if let word = fullWord {
-                WordPopoverView(word: word) { showPopover = false }
-            } else {
-                ProgressView().padding(40)
-            }
-        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     @ViewBuilder
@@ -453,75 +428,3 @@ private struct RecapRow: View {
     }
 }
 
-private struct PreviewRow: View {
-    @Environment(AppState.self) private var appState
-    let summary: WordSummary
-    let trailing: String?
-
-    @State private var showPopover: Bool = false
-    @State private var fullWord: Word?
-
-    var body: some View {
-        Button {
-            showPopover = true
-            Task { await loadWord() }
-        } label: {
-            WordSummaryRow(
-                summary: summary,
-                density: .compact,
-                showStateBadge: false,
-                trailingText: trailing
-            )
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .popover(isPresented: $showPopover) {
-            popoverContent
-                .frame(width: 380)
-                .padding(.vertical, 4)
-        }
-    }
-
-    @ViewBuilder
-    private var popoverContent: some View {
-        if let word = fullWord {
-            WordPopoverView(word: word) { showPopover = false }
-        } else {
-            VStack {
-                ProgressView()
-                Text(summary.spelling)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(width: 280, height: 120)
-        }
-    }
-
-    private func loadWord() async {
-        guard fullWord == nil, let db = appState.databaseService else { return }
-        if let word = try? db.fetchWord(id: summary.id) {
-            self.fullWord = word
-        }
-    }
-}
-
-// MARK: - Action Button (unchanged)
-
-private struct ActionButton: View {
-    let title: String
-    let icon: String
-    let color: Color
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: icon)
-                .frame(width: 140)
-        }
-        .buttonStyle(.borderedProminent)
-        .tint(color)
-        .controlSize(.large)
-    }
-}
