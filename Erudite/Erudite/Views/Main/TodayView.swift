@@ -17,6 +17,8 @@ struct TodayView: View {
 
     @State private var dueSummaries: [WordSummary] = []
     @State private var newSummaries: [WordSummary] = []
+    @State private var todayUnits: [StudyUnit] = []
+    @State private var previewUnit: StudyUnit?
     @State private var isLoading: Bool = false
 
     private let previewLimit: Int = 50
@@ -37,7 +39,7 @@ struct TodayView: View {
                     bookProgress(book: book)
                 }
 
-                quickActions
+                unitsSection
 
                 Divider()
                     .padding(.horizontal, 32)
@@ -48,6 +50,9 @@ struct TodayView: View {
             .padding(.bottom, 24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(item: $previewUnit) { unit in
+            UnitPreviewView(unit: unit)
+        }
         .task {
             appState.refreshStats()
             await reload()
@@ -57,6 +62,9 @@ struct TodayView: View {
         }
         .onChange(of: appState.isDBReady) { _, ready in
             if ready { Task { await reload() } }
+        }
+        .onChange(of: appState.settings.unitSize) { _, _ in
+            Task { await reload() }
         }
     }
 
@@ -167,17 +175,126 @@ struct TodayView: View {
         .frame(maxWidth: 480)
     }
 
-    private var quickActions: some View {
-        HStack(spacing: 12) {
-            ActionButton(title: "Start Learning", icon: "book", color: .blue) {
-                appState.startStudy(mode: .mixed)
+    // MARK: - Today's Plan (Unit selector)
+    //
+    // Replaces the old [Start Learning][Review Due][Type Practice] button
+    // strip. Shows the FSRS-driven units for today: each row is one chunk
+    // of due reviews (size = appState.settings.unitSize) plus a "New
+    // words" unit and an optional Book Chapter shortcut. Tapping a unit
+    // opens UnitPreviewView (sheet); from there the user picks Flashcard
+    // or Typing.
+
+    @ViewBuilder
+    private var unitsSection: some View {
+        if todayUnits.isEmpty && bookChapterUnit() == nil {
+            allCaughtUp
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Today's plan")
+                        .font(.headline)
+                    Spacer()
+                    Text(planSummaryLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                VStack(spacing: 6) {
+                    ForEach(todayUnits) { unit in
+                        unitRow(unit)
+                    }
+                    if let chapter = bookChapterUnit() {
+                        unitRow(chapter)
+                    }
+                }
             }
-            ActionButton(title: "Review Due", icon: "arrow.clockwise", color: .green) {
-                appState.startStudy(mode: .reviewOnly)
+            .frame(maxWidth: 640)
+        }
+    }
+
+    private var allCaughtUp: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.title2)
+                .foregroundStyle(.green)
+            Text("All caught up — no units due.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Text("New words will appear when the queue refreshes.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 24)
+        .frame(maxWidth: .infinity)
+    }
+
+    /// "4 units · ~25 min" / "1 unit · ~5 min"
+    private var planSummaryLabel: String {
+        let total = todayUnits.count + (bookChapterUnit() == nil ? 0 : 1)
+        let minutes = todayUnits.reduce(0) { $0 + $1.estimatedMinutes }
+            + (bookChapterUnit()?.estimatedMinutes ?? 0)
+        guard total > 0 else { return "" }
+        return "\(total) unit\(total == 1 ? "" : "s") · ~\(minutes) min"
+    }
+
+    private func unitRow(_ unit: StudyUnit) -> some View {
+        Button {
+            previewUnit = unit
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: unit.kind.icon)
+                    .foregroundStyle(unitColor(unit.kind.color))
+                    .font(.title3)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(unit.title)
+                        .font(.subheadline.weight(.semibold))
+                    Text(unit.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
             }
-            ActionButton(title: "Type Practice", icon: "keyboard", color: .indigo) {
-                appState.selectedTab = .typing
-            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(.quaternary, lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Optional: the next unstudied chapter of the active book. Currently
+    /// always returns the chapter starting at `chapterIndex * unitSize` for
+    /// chapter index 0 — i.e. the first chapter of the book — to give the
+    /// user a "browse the book in order" entry point. Future: track
+    /// per-book chapterProgress so this returns the *next* unfinished
+    /// chapter.
+    private func bookChapterUnit() -> StudyUnit? {
+        guard
+            let bookId = appState.activeBookId,
+            let db = appState.databaseService
+        else { return nil }
+        let builder = StudyQueueBuilder(db: db)
+        return try? builder.buildChapterUnit(
+            bookId: bookId,
+            chapterIndex: 0,
+            chapterSize: appState.settings.unitSize
+        )
+    }
+
+    private func unitColor(_ name: StudyUnit.ColorName) -> Color {
+        switch name {
+        case .orange: .orange
+        case .blue: .blue
+        case .purple: .purple
+        case .indigo: .indigo
         }
     }
 
@@ -282,10 +399,17 @@ struct TodayView: View {
             let new = try db.fetchNewWordSummaries(inBook: appState.activeBookId, limit: previewLimit)
             self.dueSummaries = due
             self.newSummaries = new
+
+            let builder = StudyQueueBuilder(db: db)
+            self.todayUnits = (try? builder.buildTodayUnits(
+                bookId: appState.activeBookId,
+                unitSize: appState.settings.unitSize
+            )) ?? []
         } catch {
             print("Today reload failed: \(error)")
             self.dueSummaries = []
             self.newSummaries = []
+            self.todayUnits = []
         }
     }
 }
