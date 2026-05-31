@@ -181,6 +181,29 @@ final class TypingViewModel {
         return Double(totalCorrect) / 5.0 / minutes
     }
 
+    /// Materialize this session as a `SessionResult` for the shared
+    /// `SessionSummaryView`. Per word: latest mistakes count + attempt
+    /// count. Same shape Flashcard uses, so the layout matches.
+    func sessionResult() -> SessionResult {
+        var byWord: [String: SessionResult.Entry] = [:]
+        for r in wordResults {
+            let existing = byWord[r.word.id]
+            byWord[r.word.id] = SessionResult.Entry(
+                word: r.word,
+                rating: nil,
+                mistakes: (existing?.mistakes ?? 0) + r.mistakes,
+                attempts: (existing?.attempts ?? 0) + 1
+            )
+        }
+        return SessionResult(
+            mode: .typing,
+            unit: activeUnit,
+            entries: Array(byWord.values),
+            durationSeconds: elapsedTime,
+            wpm: wpm > 0 ? wpm : nil
+        )
+    }
+
     // MARK: - Dependencies
 
     private var database: DatabaseService?

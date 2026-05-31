@@ -394,6 +394,54 @@ final class StudyViewModel {
         Date().timeIntervalSince(sessionStartTime)
     }
 
+    /// Materialize session-level results as a `SessionResult` for the
+    /// shared `SessionSummaryView`. Used by the `.complete` state.
+    func sessionResult() -> SessionResult {
+        // Collapse multiple ratings of the same word in this session
+        // to the latest rating + attempt count. (Currently FSRS sessions
+        // don't re-rate within a session, so attempts is usually 1, but
+        // the structure is robust if that ever changes.)
+        var byWord: [String: SessionResult.Entry] = [:]
+        for r in reviewResults {
+            let attempts = (byWord[r.word.id]?.attempts ?? 0) + 1
+            byWord[r.word.id] = SessionResult.Entry(
+                word: r.word,
+                rating: r.rating,
+                mistakes: 0,
+                attempts: attempts
+            )
+        }
+        return SessionResult(
+            mode: .flashcard,
+            unit: activeUnit,
+            entries: Array(byWord.values),
+            durationSeconds: sessionDuration,
+            wpm: nil
+        )
+    }
+
+    /// Same shape, but only the most recent unit's entries. Used by
+    /// `.unitComplete` (legacy chunking mode).
+    func unitResult() -> SessionResult {
+        var byWord: [String: SessionResult.Entry] = [:]
+        for r in unitResults {
+            let attempts = (byWord[r.word.id]?.attempts ?? 0) + 1
+            byWord[r.word.id] = SessionResult.Entry(
+                word: r.word,
+                rating: r.rating,
+                mistakes: 0,
+                attempts: attempts
+            )
+        }
+        return SessionResult(
+            mode: .flashcard,
+            unit: activeUnit,
+            entries: Array(byWord.values),
+            durationSeconds: unitDuration,
+            wpm: nil
+        )
+    }
+
     // MARK: - Private
 
     private func loadQueue(mode: StudyQueueMode) {
