@@ -3,33 +3,47 @@
 ## 1. Today / Home
 
 The entry point when opening the app. Shows progress at a glance plus the
-actual words queued for today — not just counts.
+list of **study units** the user can pick from today — never just counts.
 
 ### Layout (current)
 
 ```
 ┌── Today ────────────────────────────────────────────────────┐
-│                  Good evening!                              │
-│                  Friday, May 30                             │
+│                  Good morning!                              │
+│                  Saturday, May 31                           │
 │                                                             │
 │  📕 GRE Core 500 ▼                                          │
 │  ✓ Learned 234   ↻ Due 12   + Remaining 266                │
 │  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 47%               │
 │                                                             │
-│  [Start Learning]  [Review Due]  [Type Practice]            │
+│  Today's plan                          4 units · ~22 min    │
+│  ┌────────────────────────────────────────┐                 │
+│  │ ↻ Reviews · 1     12 cards · ~5 min  ›│                 │
+│  │ ↻ Reviews · 2     12 cards · ~5 min  ›│                 │
+│  │ ↻ Reviews · 3      9 cards · ~4 min  ›│                 │
+│  │ + New words       12 cards · ~6 min  ›│                 │
+│  │ 📕 GRE 3000 · Unit 1                  ›│  ← optional     │
+│  └────────────────────────────────────────┘                 │
 │  ─────────────────────────────────────────────────────────  │
 │                                                             │
 │  ┌─ Reviews (12) ───────────┐  ┌─ New (10) ──────────────┐ │
-│  │ ● aberrant     1d late    │  │ ◯ obstreperous          │ │
-│  │ ● coalesce     today      │  │ ◯ perfidious            │ │
-│  │ ● equivocate   today      │  │ ◯ quintessence          │ │
+│  │ aberrant     1d late      │  │ obstreperous            │ │
+│  │ coalesce     today        │  │ perfidious              │ │
+│  │ equivocate   today        │  │ quintessence            │ │
 │  │ ⋯ scroll for more        │  │ ⋯ scroll for more       │ │
 │  └──────────────────────────┘  └─────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-- **Two-column preview** (Reviews / New): each row shows spelling + POS +
-  first Chinese def. Reviews rows include a relative due-date label
+- **Today's plan** lists pre-built `StudyUnit` objects from
+  `StudyQueueBuilder.buildTodayUnits()`: due cards sliced into
+  `unitSize`-card chunks, plus an optional New Words unit (cap = unitSize),
+  plus an optional Book Chapter shortcut from the active book. Tapping a
+  row opens `UnitPreviewView` (sheet) — the user scans the words for ~30s,
+  then picks **Flashcard** or **Typing** to consume the unit. Both paths
+  consume the same pre-resolved cards/words; only the interaction differs.
+- **Two-column preview** (Reviews / New) below: each row shows spelling +
+  POS + first Chinese def. Reviews rows include a relative due-date label
   computed at local-day boundaries (`today` / `1d late` / `in 2d`).
 - **Tapping a row** opens a `WordPopoverView` for a quick peek.
 - **Empty columns** show inline "No reviews due" / "No new words queued"
@@ -37,15 +51,34 @@ actual words queued for today — not just counts.
 - Rows render from lightweight `WordSummary` projections (no full-word
   JSON decoded for the list). See `data.md` for the projection model.
 
+### Unit Preview (sheet)
+
+```
+┌── Reviews · 1 ─────────────────────────┐
+│ ↻  Reviews · 1                          │
+│   12 cards · ~5 min                     │
+│   Take 30 seconds to scan these         │
+│ ─────────────────────────────────────── │
+│   1  aberrant   /æˈber.ənt/  adj 异常的 │
+│   2  coalesce   /koʊəˈles/   v   联合   │
+│   3  equivocate ...           v   含糊 │
+│   ⋯                                     │
+│ ─────────────────────────────────────── │
+│         [Cancel]  [Typing]  [Flashcard] │
+└─────────────────────────────────────────┘
+```
+
+The unit preview is the GRE-3000 paper-book moment: see the words you're
+about to learn, decide whether you're committing, then drop in. Esc /
+Cancel returns without locking the user into a session. **Flashcard** is
+the default action (Return). **Typing** is right next to it because the
+two paths consume the same `StudyUnit` — switching mode mid-session is
+just "back to preview, pick the other one."
+
 ### AI Daily Briefing (planned, not yet built)
 - Summarizes yesterday's progress
 - Highlights focus areas ("yesterday's 'criticism' word group had low accuracy")
 - Streak days, mastered count, projected completion date
-
-### Quick Actions
-- [Start Learning] → FSRS flashcard session (mixed new + due)
-- [Review Due] → Due cards only
-- [Type Practice] → Typing tab (qwerty-learner style)
 
 ---
 
@@ -216,7 +249,19 @@ Answer: garrulous + loquacious (both mean talkative)
 
 **Philosophy:** On a computer, passive card-flipping has limited retention. Typing engages motor memory and active recall simultaneously. Inspired by [qwerty-learner](https://github.com/RealKai42/qwerty-learner).
 
-**Architecture:** Separate tab (not nested in Flashcard), independent from FSRS scheduling.
+**Two entry paths** (mirror Flashcard):
+
+1. **Unit-driven** (Today → UnitPreview → Typing): consumes the same
+   `StudyUnit` Flashcard would have. `unitMode = true`.
+2. **Standalone** (open Typing tab directly): persisted chapter index
+   for the active book; user browses chapters freely. `unitMode = false`.
+
+In **unitMode**, completing a typed word triggers a derived FSRS rating
+(`mistakes==0 → Good`, `1–2 → Hard`, `3+ → Again`) and writes through to
+`reviewCard` + `reviewLog`. Strict gate: only fires for cards where
+`state != .new && dueDate <= now`, so Typing can't skip the New→Learning
+bootstrap or pull future-scheduled cards forward. Standalone Typing
+writes `typingLog` only — no FSRS impact.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -359,21 +404,26 @@ Used by: StudyView, TypingView (any keyboard-driven view).
 ```
 loading → studying ⇄ idle (Esc pauses, Space resumes)
               │
-              └→ unitComplete (every N cards)  → studying  (Continue)
+              └→ unitComplete (every N cards, only in legacy mode)
+                                              ↘ studying  (Continue)
                                               ↘ complete   (Stop / queue empty)
 ```
 
-The session is sliced into **units** of `unitSize` cards (default 12,
-persisted as `study_unitSize` in UserDefaults). After every unit the view
-transitions to `.unitComplete` and shows a small summary card so the user
-gets a checkpoint instead of a 100-word death march. Mix is "reviews
-first, new last" — reviews already come ahead of new in the queue, so the
-unit boundary just slices wherever it lands.
+Two entry paths:
 
-The unit layer is **purely UX**. FSRS schedules each rating immediately
-(`updateCard` + `insertReviewLog` in `rate()`), so an interrupted unit
-loses no progress — the next session continues from the next card with
-all FSRS state already up-to-date.
+1. **Unit-driven (primary)** — Today → UnitPreview → Flashcard. The
+   `StudyUnit` is pre-resolved (cards + words prefetched). The view model
+   just consumes it. `inUnitMode = true`: the entire unit IS the session,
+   so the mid-session `unitComplete` check is disabled — running out of
+   cards transitions directly to `.complete` (which renders the same
+   summary content). Esc/Q ends the session and returns to Today.
+2. **Legacy (fallback)** — `appState.startStudy(mode: .mixed)` from AI
+   tools or older code paths. Builds the queue inline via
+   `fetchDueCards + fetchNewCards`. `inUnitMode = false`: every
+   `unitSize` ratings shows a Unit Summary card with [Continue][Stop].
+
+In both modes, FSRS is updated inside `rate()` *before* any phase
+transition, so an interrupted session loses no progress.
 
 **Header Bar:**
 - Progress: "X done · Y left" + card state badge (New/Learning/Review)

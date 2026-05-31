@@ -526,3 +526,52 @@ automatically the moment the upstream types compiled cleanly.
   them on. Anomalies the human can't see in the UI become obvious in
   numbers. Even when the answer is "expected for this code path", you
   now know the count.
+
+---
+
+## 2026-05-31 — Unit as a domain object
+
+### Three SQLs querying "the same thing" was a smell
+- **Symptom:** Today/Plan/Flashcard/Library each had their own
+  due/new query: `fetchDueSummaries`, `fetchDueCards`, `fetchDueBacklog`,
+  plus the Library SELECT — four implementations, slightly different
+  filters, all going to drift the moment FSRS scheduling logic moved.
+- **Root cause:** No single domain concept of "the user's session today."
+  Each view rolled its own slice.
+- **Fix:** Introduced `StudyUnit` (a resolved chunk of cards + words +
+  meta) and `StudyQueueBuilder` (the only place that constructs them).
+  Today shows `[StudyUnit]`, UnitPreview shows one, Flashcard/Typing
+  consume one. The summary queries (`fetchDueSummaries` etc.) survive
+  for the Today preview / Plan backlog / Library because *those* views
+  are about browsing, not committing — different intent, different API.
+- **Takeaway:** When N views fetch "the same thing" with subtly
+  different filters, that's not "they need different queries", that's
+  "you don't have a domain object yet". Pull the concept up; the
+  queries follow.
+
+### Two view models converging on one data shape
+- **Symptom:** `StudyViewModel` and `TypingViewModel` had completely
+  separate "load my words" code: Flashcard built its queue from FSRS
+  due/new, Typing paged through `wordListEntry` 20 at a time. The
+  user mentally maps both to "I'm studying X words right now" but
+  the engines didn't agree on which X.
+- **Fix:** Added a unit-mode entry to both view models that takes a
+  pre-resolved `StudyUnit`. Standalone modes preserved (legacy AI
+  startStudy / Typing tab direct entry) so existing flows still work.
+- **Takeaway:** When you have two interaction modes for the same
+  underlying activity, the data feed should converge before the UI
+  diverges. Each mode's `start(unit:)` becomes 5 lines of "install
+  this queue and go".
+
+### Typing → FSRS gate matters
+- **Initial instinct:** "Typing succeeded, give the card a Good rating."
+  But that would let Typing skip the New→Learning bootstrap (the user
+  could type their way past every flashcard exposure cycle), and pull
+  future-due cards forward (overriding scheduled retention windows).
+- **Decision:** Only fire derived rating when
+  `card.state != .new && card.dueDate <= now`. Mature-and-due cards
+  receive the signal; everything else is silently a typingLog only.
+- **Takeaway:** Cross-modal feedback into a scheduling system needs
+  conservative gates. The user thinks "I just typed it!" but the
+  scheduler is reasoning over a longer time horizon — let the
+  scheduler win when they disagree.
