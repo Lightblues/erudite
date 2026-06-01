@@ -781,3 +781,113 @@ automatically the moment the upstream types compiled cleanly.
   makes them meaningful, not to the page that contains them.
   When a control needs an implicit mode-flip to "make sense,"
   it doesn't belong in that mode in the first place.
+
+---
+
+## 2026-06-01 — Config-as-GUI for distribution (issue #32)
+
+### Bundle JSON for secrets is a distribution dead end
+- **Symptom:** Pre-#32, `Config.json` lived in `Resources/` and
+  was loaded once by `Bundle.main`. Fine for a solo dev (one
+  edit, one rebuild), fatal for Homebrew distribution: every
+  user would either inherit the dev's keys or unwrap an empty
+  shell with no way to fix it from inside the running app.
+- **Fix:** `AppConfig` rewritten as `@Observable` reading
+  Keychain (secrets) + UserDefaults (prefs). Bundle JSON path
+  removed entirely. Settings window (⌘,) is the **only** way
+  to set keys.
+- **Takeaway:** Anything that ships in a brew-installable DMG
+  has to be configurable from inside the app. If a config
+  surface only works in dev because you can edit a file in
+  `Resources/`, it doesn't actually exist for users — design
+  for the binary distribution path from day one.
+
+### No bundled API keys, ever
+- **Considered:** Ship a free-credit-only OpenRouter key as a
+  zero-config "just works" default. The app would launch and
+  immediately have AI capability without any user action.
+- **Rejected because:**
+  (a) it's abuse-able by anyone running brew install,
+  (b) it violates the gateway's ToS on key sharing,
+  (c) it's a debugging nightmare when credits exhaust — users
+      see "the app stops working" and have no path to fix it.
+- **Fix:** Settings header has a `Link` to `openrouter.ai/keys`.
+  30 seconds of friction beats a class of failure modes that
+  silently degrade.
+- **Takeaway:** The "just works" default for shared third-party
+  resources is "the user gets their own." Surface the signup
+  flow inside the UI; don't try to amortize a key across users.
+
+### Keychain over UserDefaults for secrets, even single-device
+- **Tempting shortcut:** Just dump everything in UserDefaults
+  with the same `didSet` pattern as `AppSettings`. Simpler
+  code path, no Security framework imports.
+- **Why not:** UserDefaults is an unencrypted plist on disk.
+  `defaults read site.easonsi.Erudite` would dump the user's
+  Anthropic / OpenRouter / MW keys in plaintext to anyone with
+  shell access. Time Machine backs up the same plist. App
+  uninstall wipes UserDefaults but Keychain survives.
+- **Fix:** Three-method `KeychainStore` (`get`/`set`/`delete`)
+  is ~80 lines, used only for the three secret fields. Prefs
+  (`aiBaseURL`, `aiModel`, `aiFastModel`) stay in UserDefaults
+  where reading is hot-path-cheap and plaintext is fine.
+- **Takeaway:** "Secret" is a qualitative property — it earns
+  the storage upgrade even when the threat model is just
+  "user's own machine, user's own data." The cost is small,
+  the failure mode (`grep -r api_key ~/Library`) is silent
+  and embarrassing.
+
+### Settings window vs. sidebar tab vs. popover
+- **Considered:** Sidebar tab — config lives next to the rest
+  of the app surface, no extra window.
+- **Why not:** Apple's HIG and every shipped macOS app
+  (Xcode, Safari, Mail, Bear, Things, 1Password) put config in
+  an independent ⌘, window. Sidebar makes sense when config
+  and data are tightly coupled (Linear, Notion). Erudite's
+  settings are setup-once API keys — a working surface they
+  are not.
+- **Decision:** Independent window for ⌘, + toolbar gear icon
+  as the rodent-friendly entry point. The gear matters: ⌘, is
+  invisible to a new user; "Settings" never appears in the
+  visible UI without it.
+- **Takeaway:** Match platform expectations for cross-cutting
+  surfaces (Settings, About, Help). Users have muscle memory
+  for ⌘, on macOS — leverage it instead of inventing a new
+  location.
+
+### Field prompts > footer hints for default values
+- **Symptom:** First pass split AI settings into two Sections:
+  "Required" (key) and "Optional overrides" (URL + models),
+  with each Section's footer explaining its defaults in prose.
+  Vertical space wasted; users had to read text to understand
+  fields they could see.
+- **Fix:** One Section. `TextField(prompt: Text("openrouter/auto"))`
+  shows the default value as gray placeholder text inside the
+  empty input. The footer now carries one short note about
+  storage location — the only thing that's not visually
+  obvious from the form itself.
+- **Takeaway:** When a field has a default, show the default
+  inside the field. Forms read top-to-bottom; users skip
+  footers. Inline placeholders are doing two jobs at once
+  (label of behavior + indicator of "you can leave this
+  blank"), and that's the right amount of information density.
+
+### iCloud sync for config: not now, maybe never
+- **Considered:** `kSecAttrSynchronizable = true` on Keychain
+  items + `NSUbiquitousKeyValueStore` for prefs. Free with the
+  paid Developer Program already required for notarization.
+- **Why deferred:** GRE prep is single-device deep work. The
+  real cross-device need is DB sync (review state, sessions),
+  which is a CloudKit-grade project (~7 days). Half-syncing
+  just config without the data feels worse than syncing
+  nothing.
+- **Decision:** Stay local-only. Future P2/P3 work adds
+  Settings → Backup export/import (config JSON + DB SQLite +
+  weekly auto-backup). Covers 4/5 of the "I switched Macs"
+  scenario without the sync infrastructure.
+- **Takeaway:** Sync is a destination, not an intermediate.
+  Don't half-sync — it splits the user's mental model
+  (which device is canonical?) without solving the actual
+  pain point. Either commit to full sync (DB + config) via
+  CloudKit when the demand justifies it, or ship a clean
+  export/import story instead.
