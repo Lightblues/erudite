@@ -89,6 +89,14 @@
 - dictionary
   - feat: 所有单词均可点击查看词义, 可嵌套
   - feat: 加入 "生词本"
+- library
+  - book 级别: search; sort (book/a-z 2 种模式); 
+    - A-Z jump (a-z sort 下); 
+    - State filter
+  - Unit 级别: 查看至今的进度
+    - 可以快速进入 flashcard/typing 学习模式
+- logs
+  - 三种形式: 1. 系统日志服务; 2. 文件保存; 3. debug 页面 (in-memory?)
 - pitfalls
   - 没有提示音: 可能是系统 alert volume 设置为 0!
 - feat: 实现 swift 下的 agent 体系

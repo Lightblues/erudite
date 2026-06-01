@@ -27,7 +27,7 @@ jobs:
                         # supported by Xcode 16.3+). macos-14's Xcode 15.4
                         # rejects it with "future Xcode project file format".
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Select latest Xcode
         # Defensive: the runner image may rotate Xcode versions. Pick
@@ -67,7 +67,7 @@ jobs:
         run: ls -lh dist/
 
       - name: Upload DMG artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: Erudite-dmg
           path: dist/Erudite-*.dmg
@@ -82,7 +82,7 @@ jobs:
       contents: write
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: artifacts
 
@@ -91,7 +91,7 @@ jobs:
         run: echo "VERSION=${GITHUB_REF#refs/tags/erudite-v}" >> $GITHUB_OUTPUT
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: Erudite v${{ steps.version.outputs.VERSION }}
           draft: false
@@ -119,7 +119,7 @@ jobs:
           echo "DMG=$DMG" >> $GITHUB_OUTPUT
 
       - name: Checkout homebrew-tap
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: lightblues/homebrew-tap
           token: ${{ secrets.TAP_PUSH_TOKEN }}

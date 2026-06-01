@@ -316,3 +316,28 @@ UI 层(View / ViewModel / @Observable)就保持默认的 MainActor,不用动
 @.ea/spec/lessons.md 上面修复 MainActor 的经验写入其中
 
 create new branch then merge. 核心内容是 ai chat 系统 & 修复
+
+## fix vscode (macos permission)
+修复下面 CC 的权限配置. 我应该已经配置为 no sandbox 了
+```sh
+!  ls /Users/frankshi/Downloads
+Permission denied: /Users/frankshi/Downloads - code: 13
+
+Skipped 1 directories due to permission denied:
+  /Users/frankshi/Downloads
+```
+```sh
+# 原因: vscode 的权限问题!
+Option A — Downloads folder only:
+System Settings → Privacy & Security → Files and Folders → expand Visual Studio Code → enable Downloads Folder.
+
+Option B — Full Disk Access (broader, simplest):
+System Settings → Privacy & Security → Full Disk Access → toggle on Visual Studio Code (add it with + if absent).
+
+After toggling, fully quit and reopen VS Code (Cmd+Q — a window reload isn't enough; the TCC grant is read at process launch).
+
+I can open the right pane for you:
+
+open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"        # Full Disk Access
+open "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders" # Files and Folders
+```
