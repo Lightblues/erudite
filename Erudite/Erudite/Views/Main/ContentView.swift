@@ -63,6 +63,12 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItem(placement: .automatic) {
+                SettingsLink {
+                    Image(systemName: "gearshape")
+                }
+                .help("Settings (⌘,)")
+            }
+            ToolbarItem(placement: .automatic) {
                 Button {
                     toggleChat()
                 } label: {

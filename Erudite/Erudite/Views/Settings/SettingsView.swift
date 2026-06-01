@@ -62,36 +62,34 @@ private struct AISettingsTab: View {
                         .help("Paste from clipboard")
                     }
                 }
-            } header: {
-                Text("Anthropic / Claude-compatible endpoint")
-                    .font(.headline)
-            } footer: {
-                Text("Used by the AI Companion and background tasks. Stored in macOS Keychain on this Mac only.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
                 LabeledContent("Base URL") {
-                    TextField("https://api.anthropic.com/v1/messages", text: $baseURLDraft)
+                    TextField("", text: $baseURLDraft, prompt: Text(AppConfig.defaultBaseURL))
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { commitBaseURL() }
                 }
                 LabeledContent("Model") {
-                    TextField(AnthropicModel.sonnet, text: $modelDraft)
+                    TextField("", text: $modelDraft, prompt: Text(AppConfig.defaultModel))
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { commitModel() }
                 }
                 LabeledContent("Fast Model") {
-                    TextField("falls back to Model, then Haiku", text: $fastModelDraft)
+                    TextField("", text: $fastModelDraft,
+                              prompt: Text("same as Model"))
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { commitFastModel() }
                 }
             } header: {
-                Text("Optional overrides")
-                    .font(.subheadline)
+                HStack(spacing: 6) {
+                    Text("AI Provider")
+                        .font(.headline)
+                    Spacer()
+                    Link(destination: URL(string: "https://openrouter.ai/keys")!) {
+                        Label("Get a key", systemImage: "arrow.up.right.square")
+                            .font(.caption)
+                    }
+                }
             } footer: {
-                Text("Leave blank to use defaults. Proxies / OpenAI-compatible gateways: set Base URL to your endpoint.")
+                Text("Defaults target OpenRouter (multi-model gateway). Override Base URL to point at Anthropic, a proxy, or any Claude-compatible endpoint. Stored in Keychain on this Mac only.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -122,6 +120,7 @@ private struct AISettingsTab: View {
         .padding()
         .onAppear(perform: loadDrafts)
         // Persist on focus changes too so blur-without-Enter still saves.
+        .onChange(of: apiKeyDraft) { _, _ in commitKey() }
         .onChange(of: baseURLDraft) { _, _ in commitBaseURL() }
         .onChange(of: modelDraft) { _, _ in commitModel() }
         .onChange(of: fastModelDraft) { _, _ in commitFastModel() }
@@ -129,13 +128,16 @@ private struct AISettingsTab: View {
 
     @ViewBuilder
     private var keyField: some View {
-        if revealKey {
-            TextField("sk-ant-…", text: $apiKeyDraft, onCommit: commitKey)
-                .textFieldStyle(.roundedBorder)
-        } else {
-            SecureField("sk-ant-…", text: $apiKeyDraft, onCommit: commitKey)
-                .textFieldStyle(.roundedBorder)
+        let prompt = Text("Required — paste your API key")
+        Group {
+            if revealKey {
+                TextField("", text: $apiKeyDraft, prompt: prompt)
+            } else {
+                SecureField("", text: $apiKeyDraft, prompt: prompt)
+            }
         }
+        .textFieldStyle(.roundedBorder)
+        .onSubmit { commitKey() }
     }
 
     @ViewBuilder

@@ -70,28 +70,35 @@ final class AppConfig {
     /// Whether AI API is configured.
     var hasAIKey: Bool { !aiApiKey.isEmpty }
 
-    /// Resolved base URL (defaults to Anthropic official endpoint).
+    /// Resolved base URL — defaults to OpenRouter's Anthropic-compatible
+    /// endpoint. OpenRouter is multi-model, has a self-serve free tier, and
+    /// honors the same wire format (with Bearer auth — see AnthropicClient).
     var resolvedAIBaseURL: String {
         if let url = aiBaseURL, !url.isEmpty {
             return url.hasSuffix("/") ? String(url.dropLast()) : url
         }
-        return "https://api.anthropic.com/v1/messages"
+        return Self.defaultBaseURL
     }
 
-    /// Resolved model name (defaults to Sonnet).
+    /// Resolved model name. `openrouter/auto` lets OpenRouter pick a
+    /// reasonable default per request — the safest zero-config choice.
     var resolvedAIModel: String {
         if let model = aiModel, !model.isEmpty { return model }
-        return AnthropicModel.sonnet
+        return Self.defaultModel
     }
 
-    /// Resolved fast model — falls back to main model, then to Haiku.
-    /// (User's proxy may not support haiku; main-model fallback keeps
-    /// background tasks alive.)
+    /// Resolved fast model — falls back to main model when not set, so the
+    /// background AI runs against `openrouter/auto` too by default.
     var resolvedFastModel: String {
         if let model = aiFastModel, !model.isEmpty { return model }
         if let model = aiModel, !model.isEmpty { return model }
-        return AnthropicModel.haiku
+        return Self.defaultModel
     }
+
+    // Public defaults — surfaced so SettingsView can show them as
+    // placeholders without re-hardcoding strings.
+    static let defaultBaseURL = "https://openrouter.ai/api/v1/messages"
+    static let defaultModel = "openrouter/auto"
 
     // MARK: - Storage keys
 
