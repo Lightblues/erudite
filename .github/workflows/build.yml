@@ -22,14 +22,27 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14   # Apple Silicon — fastest universal archive
+    runs-on: macos-15   # Xcode 16.x — required because Erudite's
+                        # project.pbxproj is on objectVersion 77 (only
+                        # supported by Xcode 16.3+). macos-14's Xcode 15.4
+                        # rejects it with "future Xcode project file format".
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode
-        # macos-14 ships Xcode 15+. We pick the default — Erudite's
-        # deployment target is 14.0 (Sonoma) so any modern Xcode works.
-        run: sudo xcode-select -s /Applications/Xcode.app
+      - name: Select latest Xcode
+        # Defensive: the runner image may rotate Xcode versions. Pick
+        # whatever lexicographically newest Xcode_*.app the runner has,
+        # so we don't silently pin to whichever version was current the
+        # day this YAML was written.
+        run: |
+          ls /Applications | grep -E '^Xcode' || true
+          LATEST=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [[ -z "$LATEST" ]]; then
+            LATEST=/Applications/Xcode.app
+          fi
+          echo "Using: $LATEST"
+          sudo xcode-select -s "$LATEST"
+          xcodebuild -version
 
       - name: Resolve version
         id: version
