@@ -1,8 +1,9 @@
 {
-  "mwDictionaryKey": "YOUR_MERRIAM_WEBSTER_COLLEGIATE_KEY",
-  "mwThesaurusKey": "YOUR_MERRIAM_WEBSTER_THESAURUS_KEY",
-  "aiApiKey": "YOUR_AI_API_KEY_HERE",
-  "aiBaseURL": "",
-  "aiModel": "",
-  "aiFastModel": ""
+  "_comment": "DEPRECATED — config is now managed via the in-app Settings window (⌘,). Keys are stored in macOS Keychain. This file is retained for reference only and is no longer loaded at runtime.",
+  "mwDictionaryKey": "your-merriam-webster-collegiate-key",
+  "mwThesaurusKey": "your-merriam-webster-thesaurus-key",
+  "aiApiKey": "your-anthropic-api-key",
+  "aiBaseURL": "leave empty to use https://api.anthropic.com/v1/messages",
+  "aiModel": "leave empty to use claude-sonnet-4",
+  "aiFastModel": "leave empty to fall back to aiModel, then haiku"
 }

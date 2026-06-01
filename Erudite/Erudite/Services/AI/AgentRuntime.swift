@@ -120,7 +120,7 @@ final class AgentRuntime {
                 let apiKey = AppConfig.shared.aiApiKey
 
                 guard AppConfig.shared.hasAIKey else {
-                    phase = .error("API key not configured. Add your Anthropic key to Config.json.")
+                    phase = .error("API key not configured. Open Settings (⌘,) to add your Anthropic key.")
                     return
                 }
 
