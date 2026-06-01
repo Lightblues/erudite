@@ -32,7 +32,7 @@ jobs:
           echo "SHA=$(sha256sum erudite.dmg | awk '{print $1}')" >> $GITHUB_OUTPUT
 
       - name: Checkout homebrew-tap
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: lightblues/homebrew-tap
           token: ${{ secrets.TAP_PUSH_TOKEN }}
