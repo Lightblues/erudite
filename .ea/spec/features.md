@@ -2,83 +2,164 @@
 
 ## 1. Today / Home
 
-The entry point when opening the app. Shows progress at a glance plus the
-actual words queued for today — not just counts.
+The entry point when opening the app. Three responsibilities, kept separate:
+
+1. **Today's activity** — inline strip showing what's been done today
+   (flashcard sessions, typing sessions, words reviewed, new words
+   learned). Hidden on a 0-everything day.
+2. **Today's homework** — FSRS-driven units the system says you need
+   today (Reviews · 1 / 2 / N + an optional New words unit).
+3. **Today's recap** — a journal of words touched today (Flashcard
+   ratings + Typing completions), sorted "needs another look" first.
+   Doubles as an **operation panel**: each row has a checkbox and the
+   bottom CTA `[Re-review · K]` materializes the selection into a
+   `.recap`-kind StudyUnit (practice mode — does NOT write back to FSRS).
+
+**What's NOT on Today**: future-due words and the new-word queue. Those
+overlap Plan and used to push recap below the fold; both now live on
+Plan as tabs. **Book chapter browsing has moved to Library** (Words ↔
+Chapters segmented control) — Today no longer mixes "what the system
+wants" with "what you might explore".
 
 ### Layout (current)
 
 ```
 ┌── Today ────────────────────────────────────────────────────┐
-│                  Good evening!                              │
-│                  Friday, May 30                             │
+│                  Good morning!                              │
+│                  Saturday, May 31                           │
 │                                                             │
 │  📕 GRE Core 500 ▼                                          │
 │  ✓ Learned 234   ↻ Due 12   + Remaining 266                │
 │  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 47%               │
 │                                                             │
-│  [Start Learning]  [Review Due]  [Type Practice]            │
+│  Today's activity                                           │
+│  ▭ 3 Flashcards  ⌨ 1 Typing  │  ↻ 47 Reviewed  + 5 New     │
+│                                                             │
+│  Today's homework                      4 units · ~22 min    │
+│  ┌────────────────────────────────────────┐                 │
+│  │ ↻ Reviews · 1     12 cards · ~5 min  ›│                 │
+│  │ ↻ Reviews · 2     12 cards · ~5 min  ›│                 │
+│  │ ↻ Reviews · 3      9 cards · ~4 min  ›│                 │
+│  │ + New words       12 cards · ~6 min  ›│                 │
+│  └────────────────────────────────────────┘                 │
 │  ─────────────────────────────────────────────────────────  │
 │                                                             │
-│  ┌─ Reviews (12) ───────────┐  ┌─ New (10) ──────────────┐ │
-│  │ ● aberrant     1d late    │  │ ◯ obstreperous          │ │
-│  │ ● coalesce     today      │  │ ◯ perfidious            │ │
-│  │ ● equivocate   today      │  │ ◯ quintessence          │ │
-│  │ ⋯ scroll for more        │  │ ⋯ scroll for more       │ │
-│  └──────────────────────────┘  └─────────────────────────┘ │
+│  Today's recap                          4 / 8 selected      │
+│  ┌────────────────────────────────────────────────────────┐│
+│  │ ☑  [Again]   sycophant   阿谀奉承的人               × 2 ││
+│  │ ☑  [Hard ]   ephemeral   短暂的                        ││
+│  │ ☑  [3 miss]  bucolic     田园的                        ││
+│  │ ☑  [Hard ]   torpor      迟钝                          ││
+│  │ ☐  [Good ]   plethora    过多                          ││
+│  │ ☐  [Easy ]   austere     朴素的                        ││
+│  │ ☐  [Typed]   nadir       最低点                        ││
+│  │ ☐  [Good ]   apex        顶峰                          ││
+│  └────────────────────────────────────────────────────────┘│
+│  [Select needsWork (4)]              [↺ Re-review · 4]      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-- **Two-column preview** (Reviews / New): each row shows spelling + POS +
-  first Chinese def. Reviews rows include a relative due-date label
-  computed at local-day boundaries (`today` / `1d late` / `in 2d`).
-- **Tapping a row** opens a `WordPopoverView` for a quick peek.
-- **Empty columns** show inline "No reviews due" / "No new words queued"
-  instead of a separate banner.
-- Rows render from lightweight `WordSummary` projections (no full-word
-  JSON decoded for the list). See `data.md` for the projection model.
+- **Today's homework** lists pre-built `StudyUnit` objects from
+  `StudyQueueBuilder.buildTodayUnits()`: due cards sliced into
+  `unitSize`-card chunks, plus an optional New Words unit (cap = unitSize).
+  Tapping a row opens `UnitPreviewView` (sheet) — the user scans the
+  words for ~30s, then picks **Flashcard** or **Typing** to consume the
+  unit. Both paths consume the same pre-resolved cards/words; only the
+  interaction differs.
+- **Today's activity** strip — sourced from
+  `DatabaseService.fetchTodayActivityStats()`. Four numbers since
+  local-day start:
+    - `flashcardSessions` / `typingSessions` — gap-clustered with a
+      30-min threshold (events less than 30 min apart belong to the
+      same session). No explicit session start/end rows in the DB.
+    - `wordsReviewed` — distinct wordIds rated today (any rating).
+    - `newWordsLearned` — distinct wordIds whose rating today was
+      given on a `.new`-state card (reviewLog.state == 0 → bootstrap
+      rating, the moment we count the word as introduced).
+  All aggregation lives in the data API; the view chip strip is purely
+  presentational. Hidden when all four numbers are 0.
+- **Today's recap** lists words touched today (Flashcard rating + Typing
+  completion), sorted by `pressingScore` (Again > Hard > many-mistakes >
+  Good > Easy). Each row carries:
+  - Checkbox, default-checked for `needsWork` rows (Again / Hard /
+    mistakes>0). User can untick or tick freely.
+  - Pressing-signal badge (Again / Hard / N miss / Good / Easy / Typed)
+  - Spelling + first Chinese def + attempt count if > 1
+  - Tapping the row body opens a `WordPopoverView` for a quick peek.
+- **Bottom CTA**: `[Re-review · K]` materializes the selected entries
+  via `StudyQueueBuilder.buildRecapUnit` into a `.recap`-kind unit and
+  opens UnitPreview. Sessions started this way do NOT write back to
+  FSRS — recap is "practice mode," not a re-rating. Disabled at K = 0.
+- **`[Select needsWork]`** secondary appears only when the current
+  selection differs from the default (handles "I cleared everything;
+  put it back").
+
+### Unit Preview (sheet)
+
+```
+┌── Reviews · 1 ─────────────────────────┐
+│ ↻  Reviews · 1                          │
+│   12 cards · ~5 min                     │
+│   Take 30 seconds to scan these         │
+│ ─────────────────────────────────────── │
+│   1  aberrant   /æˈber.ənt/  adj 异常的 │
+│   2  coalesce   /koʊəˈles/   v   联合   │
+│   3  equivocate ...           v   含糊 │
+│   ⋯                                     │
+│ ─────────────────────────────────────── │
+│         [Cancel]  [Typing]  [Flashcard] │
+└─────────────────────────────────────────┘
+```
+
+The unit preview is the GRE-3000 paper-book moment: see the words you're
+about to learn, decide whether you're committing, then drop in. Esc /
+Cancel returns without locking the user into a session. **Flashcard** is
+the default action (Return). **Typing** is right next to it because the
+two paths consume the same `StudyUnit` — switching mode mid-session is
+just "back to preview, pick the other one."
 
 ### AI Daily Briefing (planned, not yet built)
 - Summarizes yesterday's progress
 - Highlights focus areas ("yesterday's 'criticism' word group had low accuracy")
 - Streak days, mastered count, projected completion date
 
-### Quick Actions
-- [Start Learning] → FSRS flashcard session (mixed new + due)
-- [Review Due] → Due cards only
-- [Type Practice] → Typing tab (qwerty-learner style)
-
 ---
 
 ## 1b. Plan
 
-A second top-level tab dedicated to *future* work. Today is "what now?";
-Plan is "what's coming?"
+The "what's coming?" tab. Today answers "what now?"; Plan shows the
+schedule across time + the new-word queue. **Single ScrollView**:
+Roadmap + 7-Day Workload chart + tab bar + worklist all scroll
+together. The user can scroll the chart out of the way and let the
+worklist take the full viewport — the chart is a once-per-visit
+preview, not a perpetual control, so pinning it at the top wastes
+screen real estate when the worklist is the actual destination.
 
-### Layout (four sections, top → bottom)
+The worklist itself is **tab-segmented**:
+`[Today][Tomorrow][This Week][Later][New]` with a colored count
+chip per tab. One tab visible at a time so the user focuses on the
+bucket they actually want, instead of disclosure-tree clicking.
+
+### Layout
 
 ```
 ┌── Plan ────────────────────────────────────────────────────┐
 │  Roadmap                                                    │
 │  GRE Core 500 ━━━━━━━━━━━━●━━━━━━━━━━━━━ 234/500 (47%)     │
 │  At 10 new/day, ETA ~27 days.                               │
-│  Estimate varies with review accuracy.                      │
 │                                                             │
 │  7-Day Workload                                             │
 │   30 ┤                                                      │
 │   20 ┤   ▆▆                                                 │
 │   10 ┤▄▄ ▆▆ ▆▆ ▅▅ ▃▃ ▂▂ ▂▂                                  │
 │      └─Mon Tue Wed Thu Fri Sat Sun                          │
-│                                                             │
-│  New Words Queue (next 50)                                  │
-│   235  obstreperous   adj 吵闹的                             │
-│   236  perfidious     adj 背信弃义的                         │
-│   ⋯                                                          │
-│                                                             │
-│  Due Backlog                                                │
-│   ▾ Today (12)        aberrant  coalesce  …                 │
-│   ▸ Tomorrow (8)                                            │
-│   ▸ This week (45)                                          │
-│   ▸ Later (203)                                             │
+│  ─────────────────────────────────────────────────────────  │
+│  [Today · 18][Tomorrow · 24][This week · 92][Later · 145][New · 50] │
+│  ─────────────────────────────────────────────────────────  │
+│  ⚠  aberrant      adj 异常的           (overdue)             │
+│     coalesce      v   联合                                   │
+│     equivocate    v   含糊                                   │
+│     ⋯ scrolls full-height                                    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -90,17 +171,24 @@ Plan is "what's coming?"
 - Swift Charts `BarMark` of upcoming due-card load per day.
 - Snapshot disclaimer below — every rating shifts future dates.
 
-### New Words Queue
-- Next 50 words by book sortOrder. Click to push the full WordDetailView.
+### Worklist tabs
 
-### Due Backlog
-- DisclosureGroups for `Overdue` / `Today` / `Tomorrow` / `This week` /
-  `Later` (next 30 days). Each shows a per-bucket count and expands to
-  show up to 30 words; "and N more" appears when the cap is hit.
+| Tab | Contents | Tint |
+|-----|----------|------|
+| Today | `DueBucket.overdue + .today` merged. Overdue rows flagged inline with red marker. | orange |
+| Tomorrow | `DueBucket.tomorrow` | yellow |
+| This week | `DueBucket.thisWeek` (days 2..6) | green |
+| Later | `DueBucket.later` (day 7+, capped 30) | gray |
+| New | Next 50 words by book sortOrder (was the standalone "New Words Queue" section) | blue |
+
+Each tab's count chip renders in its tint color; the active tab's chip
+fills (white text on tint), inactive chips are gray. Empty states give
+specific copy ("Tomorrow is open" / "Nothing scheduled for next week")
+instead of one generic line.
 
 ### Note: "All Books" mode
-- When no active book is selected, Roadmap hides itself; Workload / Queue /
-  Backlog show global counts.
+- When no active book is selected, Roadmap hides itself; Workload + tab
+  lists show global counts.
 
 ---
 
@@ -216,7 +304,19 @@ Answer: garrulous + loquacious (both mean talkative)
 
 **Philosophy:** On a computer, passive card-flipping has limited retention. Typing engages motor memory and active recall simultaneously. Inspired by [qwerty-learner](https://github.com/RealKai42/qwerty-learner).
 
-**Architecture:** Separate tab (not nested in Flashcard), independent from FSRS scheduling.
+**Two entry paths** (mirror Flashcard):
+
+1. **Unit-driven** (Today → UnitPreview → Typing): consumes the same
+   `StudyUnit` Flashcard would have. `unitMode = true`.
+2. **Standalone** (open Typing tab directly): persisted chapter index
+   for the active book; user browses chapters freely. `unitMode = false`.
+
+In **unitMode**, completing a typed word triggers a derived FSRS rating
+(`mistakes==0 → Good`, `1–2 → Hard`, `3+ → Again`) and writes through to
+`reviewCard` + `reviewLog`. Strict gate: only fires for cards where
+`state != .new && dueDate <= now`, so Typing can't skip the New→Learning
+bootstrap or pull future-scheduled cards forward. Standalone Typing
+writes `typingLog` only — no FSRS impact.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -357,8 +457,28 @@ Used by: StudyView, TypingView (any keyboard-driven view).
 
 **State Machine:**
 ```
-loading → studying ⇄ idle (Esc pauses, Space resumes) → complete
+loading → studying ⇄ idle (Esc pauses, Space resumes)
+              │
+              └→ unitComplete (every N cards, only in legacy mode)
+                                              ↘ studying  (Continue)
+                                              ↘ complete   (Stop / queue empty)
 ```
+
+Two entry paths:
+
+1. **Unit-driven (primary)** — Today → UnitPreview → Flashcard. The
+   `StudyUnit` is pre-resolved (cards + words prefetched). The view model
+   just consumes it. `inUnitMode = true`: the entire unit IS the session,
+   so the mid-session `unitComplete` check is disabled — running out of
+   cards transitions directly to `.complete` (which renders the same
+   summary content). Esc/Q ends the session and returns to Today.
+2. **Legacy (fallback)** — `appState.startStudy(mode: .mixed)` from AI
+   tools or older code paths. Builds the queue inline via
+   `fetchDueCards + fetchNewCards`. `inUnitMode = false`: every
+   `unitSize` ratings shows a Unit Summary card with [Continue][Stop].
+
+In both modes, FSRS is updated inside `rate()` *before* any phase
+transition, so an interrupted session loses no progress.
 
 **Header Bar:**
 - Progress: "X done · Y left" + card state badge (New/Learning/Review)
@@ -382,7 +502,8 @@ loading → studying ⇄ idle (Esc pauses, Space resumes) → complete
 | → / n | Skip to next word |
 | r | Replay pronunciation |
 | q | End session |
-| Esc | Pause → idle |
+| Esc | Pause → idle (or end session from .unitComplete) |
+| Space / Return | (in .unitComplete) Continue to next unit |
 
 **Mouse Operations:**
 - Click card → toggle reveal
@@ -390,8 +511,14 @@ loading → studying ⇄ idle (Esc pauses, Space resumes) → complete
 - Click ← / → in navigation → go back / skip
 - Click Word List → popover with full queue
 
+**Unit Complete Card:**
+- Header "Unit N complete" + "Take a breath — X cards left"
+- 4 stats: Cards / Time / Accuracy / Again count
+- Mini-grid of the unit's words colored by rating
+- [Continue] (default action — Space/Return) and [Stop] buttons
+
 **Session Complete Page:**
-- Stats: Cards studied / Duration / Again count
+- Stats: Cards studied / Duration / Again count (whole-session totals)
 - Full word list with rating color (Again=red, Hard=orange, Good=green, Easy=blue)
 - "Study More" button to start new session
 
@@ -439,6 +566,12 @@ AI recommends the optimal mode based on:
 
 ## 4. Word Library (词库)
 
+Library answers **one** question: "browse this app's words." Everything
+else is a **slice** on that list — Book, Unit, State, Sort, Search are
+peer filters; they don't open separate views. Practice (Flashcard /
+Typing) is an **action** on the current slice via footer buttons, not
+a parallel mode.
+
 ### Layout
 
 Mail-style split when the window is wide enough (≥ 900pt), single-column
@@ -446,15 +579,33 @@ push navigation otherwise. Layout selection is automatic via `GeometryReader`.
 
 ```
 ┌── Library (wide) ───────────────────────────────────────────┐
-│ [search] [Book ▾] [Tier ▾] [State ▾] [Sort ▾]               │
+│ [search] [Book ▾] [Unit ▾] [State ▾] [Sort ▾]               │
 │ ─────────────────────────────────────────────────────────── │
-│  ●  aberrant   /æˈber.ənt/ adj 异常的    Review   │ aberrant │
-│     coalesce   ...          v   联合     Learning │ /æˈber/  │
-│     equivocate ...          v   含糊其辞  Review  │ ━━━━━━  │
-│     garrulous  ...          adj 啰嗦的   New      │ Learning │
+│  aberrant     /æˈber.ənt/ adj 异常的    Review   │ aberrant │
+│  coalesce     ...          v   联合     Learning │ /æˈber/  │
+│  equivocate   ...          v   含糊其辞  Review  │ ━━━━━━  │
+│  garrulous    ...          adj 啰嗦的   New      │ Learning │
 │  ⋯                                                │ Progress │
 │                                                  │ ⋯        │
-│ Showing 200 of 13,422 · [Load More]              │          │
+│ Showing 13,422                                   │          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+When a Unit is picked, the header collapses to `[search] [Book] [Unit]`
+(State + Sort are redundant inside a single unit) and the footer
+becomes an action surface:
+
+```
+┌── Library · Unit 5 ─────────────────────────────────────────┐
+│ [search] [Book ▾] [Unit: 5 (efflorescent — embellish) ▾]    │
+│ ─────────────────────────────────────────────────────────── │
+│  efflorescent  ...                       New                │
+│  effrontery    ...                       New                │
+│  effusive      ...                       Learning           │
+│  ⋯                                                          │
+│ ─────────────────────────────────────────────────────────── │
+│ efflorescent — embellish    [▭ Flashcard]  [⌨ Typing]       │
+│ ● 0 Mastered  ● 1 Review  ● 2 Learning  ● 9 New   12 words  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -464,12 +615,79 @@ All run as SQL — never as in-memory filtering of decoded `Word` blobs.
 Backed by `WordSummary` projections; see `data.md`.
 
 - **Search** (debounced 300ms): `LIKE` on `spelling` or first Chinese def.
-- **Book filter** (active book): `INNER JOIN wordListEntry`.
-- **Tier filter**: Core / Common / Advanced.
-- **State filter**: New / Learning / Review / Mature (Mature ≈ Review +
-  stability ≥ 21d).
-- **Sort**: Frequency / A→Z / Due date / Most lapses.
-- **Pagination**: 200/page with a Load More button (no infinite scroll).
+- **Book filter** (defaults to active study book; two-way synced with
+  `AppState.activeBookId` so Today / Plan / Library always agree on the
+  current book): `INNER JOIN wordListEntry`.
+- **Unit picker** (only when a Book is selected): "All units" or one of
+  the book's `unitSize`-row slices, labeled with the slice's first and
+  last spelling — "Unit 5 (efflorescent — embellish)". Backed by
+  `DatabaseService.fetchUnitRanges(bookId:unitSize:)`. Selecting Unit ≠
+  All hides the State + Sort pickers (the unit IS the slice; per-row
+  state badges remain) and forces the SQL to `state: .all, sort:
+  .bookOrder` so the unit's natural order is preserved. The Swift-side
+  `sliceForUnit` then narrows the loaded set to the unit's
+  `firstSpelling..lastSpelling` window — Search still cuts within that
+  window if active.
+- **State filter** (Book mode only): New / Learning / Review / Mature.
+- **Sort** (Book mode only): Book Order (default when a book is
+  selected — uses `wordListEntry.sortOrder`) / A→Z. Without a book
+  picked, Book Order silently falls back to A→Z. Sort cases for
+  `dueDate` and `lapses` were removed in erudite-31 — Plan's
+  `[Today][Tomorrow]` tabs and Today's recap own those signals now.
+
+### A-Z jump bar
+
+Vertical 26-letter strip between the list pane and the resizable
+divider, **mounted only when sort = .alphabetical** (was always-on
+before; meaningless under Book Order, which is its default sort
+when a book is selected). Click a letter → first matching row gets
+selected; SwiftUI List auto-scrolls. Letters with zero matches
+under current filters are dimmed.
+
+### No pagination
+
+Library reads the full matching slice in one SQL hit and lets
+SwiftUI List recycle rows lazily. 13K rows render fine. The
+prior "200 per page + Load More" model was removed in erudite-31
+because pagination + jump-bar were two overlapping "position"
+mental models — picking one path resolves the conflict.
+
+### Footer
+
+Two flavors:
+
+- **Book mode** (no unit selected): thin status line "Showing N".
+- **Unit mode** (unit selected): shows the unit's spelling range +
+  `[▭ Flashcard]` `[⌨ Typing]` direct-start action buttons + a row
+  of progress chips (Mastered / Review / Learning / New, derived
+  from `summaries.cardState`). Pressing a button builds the unit
+  via `StudyQueueBuilder.buildChapterUnit` and pins it to AppState
+  via `startUnit(unit, in:)` — no UnitPreview detour, the user
+  just saw the words in the list.
+
+### Resizable split + persistent state
+
+- Split layout uses **Mail-style proportions**: list defaults to 360pt
+  (draggable 280–600pt via the divider's hit-region), detail fills the
+  remainder. The list width is persisted to `UserDefaults` so it survives
+  restarts.
+- All Library "live state" (loaded summaries, selection, filter
+  pickers, selected unit index, list pane width) lives in
+  `LibraryState` (`@Observable`, owned by `AppState`). Switching tabs
+  and coming back preserves position — the user doesn't snap back to
+  "abacus" every time.
+- The lightbulb in row trailings is **purple, only when the user has
+  authored their own mnemonic** (a `user_content` row of type
+  `mnemonic`). Builtin mnemonics now have ~100% coverage so a generic
+  "has mnemonic" indicator carries no signal.
+
+The previous **Tier filter** (Core / Common / Advanced) was removed in
+2026-05. The bundled `frequency` field had no authoritative GRE provenance
+and 80%+ of words landed in the Advanced bucket, so the picker added
+clutter without information. `Word.frequency` is still kept on the model
+for backward compat — if a real importance signal becomes available
+(per-book curation weights, corpus frequency rank), we can reintroduce a
+filter on top of it.
 
 ### Keyboard browsing (split mode)
 

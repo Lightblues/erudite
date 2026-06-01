@@ -3,13 +3,30 @@ import Charts
 
 // MARK: - Plan View
 //
-// Four sections, each independently fetched and rendered:
-//   1. Roadmap          — overall progress + ETA for the active book
-//   2. 7-Day Workload   — bar chart of upcoming due-card load (Swift Charts)
-//   3. New Words Queue  — next 50 words from book sortOrder
-//   4. Due Backlog      — disclosure groups by time bucket (Today/Tomorrow/...)
+// Single-scroll layout: Roadmap + 7-Day Workload chart + Tab bar +
+// Worklist all live in one ScrollView so the user can scroll the
+// preview-y stuff out of the way and let the word list take the
+// full viewport. The overview header isn't always-actionable —
+// users glance at it once per visit, then want to focus on a
+// specific bucket — so pinning it at the top wasted screen real
+// estate when the worklists were the actual destination.
 //
-// Loads live for the active book; "All Books" shows the global view.
+//   ┌─────────────────────────────────────────┐
+//   │  Roadmap  (active book ETA)             │  scrolls with
+//   │  7-Day Workload  (Swift Charts)         │  everything
+//   ├─────────────────────────────────────────┤
+//   │  [Today · 18][Tomorrow · 24]…[New · 50] │  segmented tabs
+//   │  ─────────────────────────────────      │
+//   │  selected bucket's word list             │  full-height
+//   │  …  (scroll up to see chart again)       │
+//   └─────────────────────────────────────────┘
+//
+// Bucket model:
+// - `Today` merges DueBucket.overdue + .today (overdue is highlighted
+//   with a red marker so the user still notices it)
+// - `Tomorrow` / `This Week` / `Later` mirror DueBucket directly
+// - `New` is the next 50 words from book sortOrder — same data the
+//   Today tab used to show in its right column
 
 struct PlanView: View {
     @Environment(AppState.self) private var appState
@@ -18,6 +35,7 @@ struct PlanView: View {
     @State private var newQueue: [WordSummary] = []
     @State private var backlog: [DatabaseService.DueBucket: [WordSummary]] = [:]
     @State private var backlogCounts: [DatabaseService.DueBucket: Int] = [:]
+    @State private var selectedTab: WorklistTab = .today
     @State private var isLoading: Bool = false
 
     var body: some View {
@@ -25,20 +43,22 @@ struct PlanView: View {
         // (NavigationSplitView's detail column doesn't supply its own stack).
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
+                VStack(alignment: .leading, spacing: 20) {
                     title
                     roadmapSection
                     workloadSection
-                    newQueueSection
-                    backlogSection
+                    Divider()
+                    worklistTabBar
+                    Divider()
+                    worklistList
                 }
-                .padding(24)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 24)
+                .padding(.top, 24)
+                .padding(.bottom, 24)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationDestination(for: String.self) { wordId in
-                // Reuse Library's loader pattern by going through a small wrapper
-                // (kept inside this file to avoid exporting another type)
                 PlanWordDetailLoader(wordId: wordId)
             }
             .task {
@@ -161,7 +181,7 @@ struct PlanView: View {
                             .font(.caption)
                     }
                 }
-                .frame(height: 180)
+                .frame(height: 140)
 
                 Text("Review counts are a snapshot — each rating you give shifts future due dates.")
                     .font(.caption)
@@ -170,99 +190,144 @@ struct PlanView: View {
         }
     }
 
-    // MARK: - Section 3: New Words Queue
+    // MARK: - Worklist tab bar (segmented control with counts)
+    //
+    // Picker(.segmented) does the job for the picker UI; we wrap it in
+    // a custom row so each segment can show "Today · 18" with a colored
+    // count, which the native segmented style can't surface.
 
-    private var newQueueSection: some View {
-        sectionCard(title: "New Words Queue", systemImage: "tray") {
-            if newQueue.isEmpty {
-                Text("No new words remaining in this book.")
+    private var worklistTabBar: some View {
+        HStack(spacing: 6) {
+            ForEach(WorklistTab.allCases, id: \.self) { tab in
+                worklistTabButton(tab)
+            }
+            Spacer()
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func worklistTabButton(_ tab: WorklistTab) -> some View {
+        let count = countFor(tab)
+        let active = (selectedTab == tab)
+        return Button {
+            selectedTab = tab
+        } label: {
+            HStack(spacing: 6) {
+                Text(tab.label)
+                    .font(.subheadline.weight(active ? .semibold : .regular))
+                Text("\(count)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(active ? .white : .secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(
+                        Capsule().fill(active ? tab.tint : Color.secondary.opacity(0.15))
+                    )
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(active ? tab.tint.opacity(0.15) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(active ? tab.tint.opacity(0.5) : Color.secondary.opacity(0.2),
+                            lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func countFor(_ tab: WorklistTab) -> Int {
+        switch tab {
+        case .today:
+            return (backlogCounts[.overdue] ?? 0) + (backlogCounts[.today] ?? 0)
+        case .tomorrow:
+            return backlogCounts[.tomorrow] ?? 0
+        case .thisWeek:
+            return backlogCounts[.thisWeek] ?? 0
+        case .later:
+            return backlogCounts[.later] ?? 0
+        case .new:
+            return newQueue.count
+        }
+    }
+
+    // MARK: - Worklist list
+    //
+    // Lives inside the outer ScrollView so it can grow as tall as needed
+    // and scroll alongside the Roadmap + Chart above. We deliberately
+    // do NOT nest a second ScrollView here — the parent's scroll state
+    // belongs to the whole page, not a sub-region. Use `LazyVStack` for
+    // row recycling so a 100-row tab still costs ~constant memory.
+
+    @ViewBuilder
+    private var worklistList: some View {
+        let summaries = summariesFor(selectedTab)
+        if summaries.isEmpty {
+            VStack(spacing: 8) {
+                Image(systemName: selectedTab.emptyIcon)
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+                Text(selectedTab.emptyMessage)
                     .font(.callout)
                     .foregroundStyle(.secondary)
-            } else {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("Next \(newQueue.count) — in book order")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.bottom, 6)
-
-                    ForEach(Array(newQueue.enumerated()), id: \.element.id) { index, summary in
-                        NavigationLink(value: summary.id) {
-                            HStack(spacing: 10) {
+            }
+            .frame(maxWidth: .infinity, minHeight: 200)
+            .padding(.vertical, 24)
+        } else {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(summaries.enumerated()), id: \.element.id) { index, summary in
+                    NavigationLink(value: summary.id) {
+                        HStack(spacing: 10) {
+                            if selectedTab == .new {
                                 Text("\(index + 1)")
                                     .font(.caption2)
                                     .foregroundStyle(.tertiary)
                                     .frame(width: 28, alignment: .trailing)
                                     .monospacedDigit()
-                                WordSummaryRow(summary: summary, density: .compact, showStateBadge: false)
+                            } else if selectedTab == .today,
+                                      let due = summary.dueDate,
+                                      due < Calendar.current.startOfDay(for: Date()) {
+                                // Overdue marker — flag past-due words
+                                // inside the merged Today tab.
+                                Image(systemName: "exclamationmark.circle.fill")
+                                    .foregroundStyle(.red)
+                                    .font(.caption)
+                                    .frame(width: 28)
+                            } else {
+                                Color.clear.frame(width: 28)
                             }
+                            WordSummaryRow(summary: summary, density: .compact, showStateBadge: false)
                         }
-                        .buttonStyle(.plain)
-                        if index < newQueue.count - 1 { Divider() }
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - Section 4: Due Backlog
-
-    private var backlogSection: some View {
-        sectionCard(title: "Due Backlog", systemImage: "tray.full") {
-            if backlogCounts.isEmpty {
-                Text("Nothing due in the next 30 days.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } else {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(DatabaseService.DueBucket.allCases, id: \.rawValue) { bucket in
-                        if let count = backlogCounts[bucket], count > 0 {
-                            backlogGroup(bucket: bucket, count: count)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func backlogGroup(bucket: DatabaseService.DueBucket, count: Int) -> some View {
-        let summaries = backlog[bucket] ?? []
-        DisclosureGroup {
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(summaries) { summary in
-                    NavigationLink(value: summary.id) {
-                        WordSummaryRow(summary: summary, density: .compact, showStateBadge: false)
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     Divider()
                 }
-                if summaries.count < count {
-                    Text("… and \(count - summaries.count) more")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .padding(.vertical, 4)
-                }
-            }
-            .padding(.leading, 8)
-        } label: {
-            HStack {
-                if bucket == .overdue {
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .foregroundStyle(.red)
-                }
-                Text(bucket.label)
-                    .font(.callout)
-                    .fontWeight(bucket == .today || bucket == .overdue ? .semibold : .regular)
-                Spacer()
-                Text("\(count)")
-                    .font(.caption.weight(.medium))
-                    .monospacedDigit()
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(.quaternary, in: Capsule())
             }
         }
-        .padding(.vertical, 2)
+    }
+
+    private func summariesFor(_ tab: WorklistTab) -> [WordSummary] {
+        switch tab {
+        case .today:
+            // Merge overdue + today; overdue first so the user sees
+            // what's most urgent. Both share the "needs to be done now"
+            // mental model, no point splitting them into two tabs.
+            return (backlog[.overdue] ?? []) + (backlog[.today] ?? [])
+        case .tomorrow:
+            return backlog[.tomorrow] ?? []
+        case .thisWeek:
+            return backlog[.thisWeek] ?? []
+        case .later:
+            return backlog[.later] ?? []
+        case .new:
+            return newQueue
+        }
     }
 
     // MARK: - Section card shell
@@ -299,10 +364,59 @@ struct PlanView: View {
         do {
             self.dueByDay = try db.fetchDueCountsByDay(daysAhead: 7, inBook: bookId)
             self.newQueue = try db.fetchNewWordSummaries(inBook: bookId, limit: 50)
-            self.backlog = try db.fetchDueBacklog(inBook: bookId, perBucketLimit: 30)
+            self.backlog = try db.fetchDueBacklog(inBook: bookId, perBucketLimit: 100)
             self.backlogCounts = try db.fetchDueBacklogCounts(inBook: bookId)
         } catch {
             print("Plan reload failed: \(error)")
+        }
+    }
+}
+
+// MARK: - Worklist tabs
+//
+// The visible tabs in Plan's worklist segment. `Today` merges the
+// underlying DueBucket.overdue + .today; everything else is 1:1.
+// Order: Today → Tomorrow → This Week → Later → New (queued, not
+// yet scheduled).
+
+private enum WorklistTab: String, CaseIterable, Hashable {
+    case today, tomorrow, thisWeek, later, new
+
+    var label: String {
+        switch self {
+        case .today: "Today"
+        case .tomorrow: "Tomorrow"
+        case .thisWeek: "This week"
+        case .later: "Later"
+        case .new: "New"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .today: .orange
+        case .tomorrow: .yellow
+        case .thisWeek: .green
+        case .later: .gray
+        case .new: .blue
+        }
+    }
+
+    var emptyMessage: String {
+        switch self {
+        case .today: "Nothing due today. Nice."
+        case .tomorrow: "Tomorrow is open."
+        case .thisWeek: "Nothing scheduled this week."
+        case .later: "Nothing scheduled for next week."
+        case .new: "No new words remaining in this book."
+        }
+    }
+
+    var emptyIcon: String {
+        switch self {
+        case .today: "checkmark.seal"
+        case .tomorrow, .thisWeek, .later: "calendar"
+        case .new: "tray"
         }
     }
 }

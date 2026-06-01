@@ -16,8 +16,19 @@ nonisolated struct WordSummary: Identifiable, Hashable {
     let firstDefZh: String?     // first Chinese definition (for list display)
     let posLabel: String?       // first part-of-speech ("adj", "v", ...)
     let hasMnemonic: Bool       // any builtin mnemonic available
+    /// True iff `user_content` has a row with type='mnemonic' for this word.
+    /// Drives the small purple lightbulb on list rows. After v3.0,
+    /// `hasMnemonic` (builtin) is true for ~100% of rows so it has no
+    /// discrimination value as a list signal — `hasUserMnemonic` highlights
+    /// words the user has actually annotated.
+    let hasUserMnemonic: Bool
     let cardState: CardState?   // nil if no ReviewCard exists yet
     let dueDate: Date?          // populated only when the query joins reviewCard
+    /// Total reviews (rc.reps). Populated by the standard summary SELECT;
+    /// nil only when the row was constructed by hand.
+    let reps: Int?
+    /// Lapses (rc.lapses) — times the card slipped back from review.
+    let lapses: Int?
 
     init(
         id: String,
@@ -27,8 +38,11 @@ nonisolated struct WordSummary: Identifiable, Hashable {
         firstDefZh: String? = nil,
         posLabel: String? = nil,
         hasMnemonic: Bool = false,
+        hasUserMnemonic: Bool = false,
         cardState: CardState? = nil,
-        dueDate: Date? = nil
+        dueDate: Date? = nil,
+        reps: Int? = nil,
+        lapses: Int? = nil
     ) {
         self.id = id
         self.spelling = spelling
@@ -37,25 +51,40 @@ nonisolated struct WordSummary: Identifiable, Hashable {
         self.firstDefZh = firstDefZh
         self.posLabel = posLabel
         self.hasMnemonic = hasMnemonic
+        self.hasUserMnemonic = hasUserMnemonic
         self.cardState = cardState
         self.dueDate = dueDate
+        self.reps = reps
+        self.lapses = lapses
     }
 }
 
 // MARK: - Sort
+//
+// `bookOrder` is only meaningful when a Book is selected (uses
+// wordListEntry.sortOrder to honor the book's curated order — e.g.
+// GRE 3000's chapter-by-chapter sequence). When no Book is picked,
+// the SQL builder silently falls back to alphabetical so it never
+// produces nonsense.
+//
+// History (lessons we kept):
+// - `frequency` was removed in 2026-05: bundled tier had no
+//   authoritative GRE provenance and 80% of rows landed in tier 3.
+// - `dueDate` and `lapses` were removed in 2026-05 (erudite-31):
+//   both are now better answered elsewhere — Plan's Today/Tomorrow
+//   tabs surface dueDate, and Today's recap surfaces lapses-equivalent
+//   "needs work" via Again/Hard/mistakes. Library's job is to be the
+//   browse-the-words tab; "what should I work on" lives where it
+//   belongs.
 
 nonisolated enum WordSort: String, CaseIterable, Hashable {
-    case frequency      // by tier then alphabetical (default)
+    case bookOrder       // wordListEntry.sortOrder (book selected) → alphabetical fallback
     case alphabetical
-    case dueDate        // soonest due first (review cards)
-    case lapses         // most lapses first
 
     var label: String {
         switch self {
-        case .frequency: "Frequency"
+        case .bookOrder: "Book Order"
         case .alphabetical: "A → Z"
-        case .dueDate: "Due Date"
-        case .lapses: "Most Lapses"
         }
     }
 }

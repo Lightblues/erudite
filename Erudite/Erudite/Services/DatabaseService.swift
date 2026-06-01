@@ -114,6 +114,13 @@ nonisolated final class DatabaseService: Sendable {
             try db.create(index: "idx_log_time", on: "reviewLog", columns: ["timestamp"], ifNotExists: true)
             try db.create(index: "idx_log_card", on: "reviewLog", columns: ["cardId"], ifNotExists: true)
             try db.create(index: "idx_ai_cache", on: "aiCache", columns: ["wordId", "contentType"], ifNotExists: true)
+            // Library does ORDER BY w.spelling COLLATE NOCASE on every page —
+            // give it a covering index so we don't full-scan + sort 13K rows.
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_word_spelling ON word (spelling COLLATE NOCASE)")
+            // Book-order browsing relies on (listId, sortOrder); the existing
+            // PRIMARY KEY on (listId, wordId) doesn't help. Add it so paging
+            // through a Book in sortOrder is index-driven.
+            try db.create(index: "idx_wle_list_order", on: "wordListEntry", columns: ["listId", "sortOrder"], ifNotExists: true)
 
             // Typing practice log
             try db.create(table: "typingLog", ifNotExists: true) { t in
@@ -198,6 +205,16 @@ nonisolated final class DatabaseService: Sendable {
                 t.column("updatedAt", .datetime).notNull()
             }
             try db.create(index: "idx_user_content_word", on: "user_content", columns: ["wordId", "type"], ifNotExists: true)
+
+            // Generic key/value metadata.
+            // Used for tracking the bundled data version (so we can upgrade
+            // pre-existing words when words.json ships a newer enrichment).
+            // Other future uses: schema migration markers, last-seen-changelog,
+            // feature flags. Stays small (< 100 rows) so no need for indexes.
+            try db.create(table: "meta", ifNotExists: true) { t in
+                t.primaryKey("key", .text)
+                t.column("value", .text).notNull()
+            }
         }
     }
 
@@ -224,6 +241,70 @@ nonisolated final class DatabaseService: Sendable {
                 )
             }
         }
+    }
+
+    /// Bulk-upgrade word.data for words already in the DB.
+    ///
+    /// Used by WordLoader when the bundled words.json version moves forward
+    /// (e.g. v1.0 → v3.0 ai-enriched). For each input word:
+    /// - if it exists: UPDATE the row (preserving foreign key relationships)
+    /// - if it's new: INSERT a fresh row + create a ReviewCard for it
+    ///
+    /// CRITICAL: We must NOT use `INSERT OR REPLACE` here. SQLite implements
+    /// REPLACE as DELETE-then-INSERT when there's a primary-key conflict, and
+    /// reviewCard.wordId has `ON DELETE CASCADE` — so a naive REPLACE would
+    /// wipe out the user's entire FSRS progress. UPDATE on the same primary
+    /// key avoids triggering the DELETE and keeps reviewCard / reviewLog /
+    /// user_content untouched.
+    ///
+    /// Returns (`existingUpdated`, `newInserted`) so the caller can log a
+    /// useful summary.
+    func upsertWordData(_ words: [Word]) throws -> (existingUpdated: Int, newInserted: Int) {
+        let encoder = JSONEncoder()
+        var updated = 0
+        var inserted = 0
+        try dbQueue.write { db in
+            // Pull existing IDs once so we can pick UPDATE vs INSERT per row.
+            let existingIds = Set(try String.fetchAll(db, sql: "SELECT id FROM word"))
+            for word in words {
+                let jsonData = try encoder.encode(word)
+                if existingIds.contains(word.id) {
+                    try db.execute(
+                        sql: """
+                            UPDATE word
+                            SET spelling = ?, phonetic = ?, sentiment = ?, frequency = ?, data = ?
+                            WHERE id = ?
+                            """,
+                        arguments: [
+                            word.spelling,
+                            word.phonetic,
+                            word.sentiment.rawValue,
+                            word.frequency.rawValue,
+                            jsonData,
+                            word.id
+                        ]
+                    )
+                    updated += 1
+                } else {
+                    try db.execute(
+                        sql: """
+                            INSERT INTO word (id, spelling, phonetic, sentiment, frequency, data)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                        arguments: [
+                            word.id,
+                            word.spelling,
+                            word.phonetic,
+                            word.sentiment.rawValue,
+                            word.frequency.rawValue,
+                            jsonData
+                        ]
+                    )
+                    inserted += 1
+                }
+            }
+        }
+        return (updated, inserted)
     }
 
     func fetchAllWords() throws -> [Word] {
@@ -278,6 +359,62 @@ nonisolated final class DatabaseService: Sendable {
         }
     }
 
+    // MARK: - Unit ranges (for Library's Unit picker)
+    //
+    // A "unit" is a fixed-size slice of a book's words in sortOrder.
+    // The Library UI exposes this as a picker — selecting Unit N
+    // filters the word list to that slice. The picker's labels
+    // ("Unit 5 (efflorescent — embellish)") need each unit's first
+    // and last spelling, so we hand them back here in one query.
+
+    nonisolated struct UnitRange: Sendable, Hashable, Identifiable {
+        let index: Int             // 0-based
+        let firstSpelling: String
+        let lastSpelling: String
+        let count: Int             // usually equals unitSize; final unit may be smaller
+
+        var id: Int { index }
+
+        /// 1-based human label, e.g. "Unit 1".
+        var label: String { "Unit \(index + 1)" }
+
+        /// Range string for picker display: "aback – apparel".
+        var rangeText: String { "\(firstSpelling) – \(lastSpelling)" }
+    }
+
+    func fetchUnitRanges(bookId: String, unitSize: Int) throws -> [UnitRange] {
+        guard unitSize > 0 else { return [] }
+        return try dbQueue.read { db in
+            // Pull the whole book's spellings in sortOrder, then chunk.
+            // 13K rows × one column = a few hundred KB; cheaper than N
+            // separate window-function queries against SQLite without
+            // ROW_NUMBER support pre-3.25 (which we have, but the chunk
+            // pass in Swift is clearer).
+            let spellings = try String.fetchAll(db, sql: """
+                SELECT w.spelling FROM word w
+                JOIN wordListEntry wle ON wle.wordId = w.id
+                WHERE wle.listId = ?
+                ORDER BY wle.sortOrder
+                """, arguments: [bookId])
+            guard !spellings.isEmpty else { return [] }
+            var result: [UnitRange] = []
+            var i = 0
+            var idx = 0
+            while i < spellings.count {
+                let end = Swift.min(i + unitSize, spellings.count)
+                result.append(UnitRange(
+                    index: idx,
+                    firstSpelling: spellings[i],
+                    lastSpelling: spellings[end - 1],
+                    count: end - i
+                ))
+                idx += 1
+                i = end
+            }
+            return result
+        }
+    }
+
     func fetchWord(id: String) throws -> Word? {
         let decoder = JSONDecoder()
         return try dbQueue.read { db in
@@ -303,16 +440,15 @@ nonisolated final class DatabaseService: Sendable {
 
     func fetchWordSummaries(
         book: String? = nil,
-        tier: FrequencyTier? = nil,
         state: WordStateFilter = .all,
         search: String? = nil,
-        sort: WordSort = .frequency,
-        limit: Int = 200,
+        sort: WordSort = .bookOrder,
+        limit: Int? = nil,
         offset: Int = 0
     ) throws -> [WordSummary] {
         try dbQueue.read { db in
             let (sql, args) = Self.buildSummaryQuery(
-                book: book, tier: tier, state: state, search: search,
+                book: book, state: state, search: search,
                 sort: sort, limit: limit, offset: offset, countOnly: false
             )
             let rows = try Row.fetchAll(db, sql: sql, arguments: args)
@@ -322,14 +458,13 @@ nonisolated final class DatabaseService: Sendable {
 
     func fetchWordSummaryCount(
         book: String? = nil,
-        tier: FrequencyTier? = nil,
         state: WordStateFilter = .all,
         search: String? = nil
     ) throws -> Int {
         try dbQueue.read { db in
             let (sql, args) = Self.buildSummaryQuery(
-                book: book, tier: tier, state: state, search: search,
-                sort: .frequency, limit: 0, offset: 0, countOnly: true
+                book: book, state: state, search: search,
+                sort: .alphabetical, limit: nil, offset: 0, countOnly: true
             )
             return try Int.fetchOne(db, sql: sql, arguments: args) ?? 0
         }
@@ -342,25 +477,215 @@ nonisolated final class DatabaseService: Sendable {
         }
     }
 
+    /// Counts how many filter-matching rows come *before* the first row whose
+    /// spelling starts with `letter` (case-insensitive), under alphabetical
+    /// sort. This is the offset Library uses to jump-scroll to a letter.
+    ///
+    /// Returns nil if no matching word starts with that letter (so the UI
+    /// can dim that letter on the jump bar).
+    func offsetForFirstSpelling(
+        startingWith letter: Character,
+        book: String? = nil,
+        state: WordStateFilter = .all,
+        search: String? = nil
+    ) throws -> Int? {
+        try dbQueue.read { db in
+            let letterStr = String(letter).lowercased()
+            // Build the same WHERE clauses as the main summary query, but
+            // counting rows that come strictly BEFORE the target letter
+            // under spelling-COLLATE-NOCASE order. We also need to know
+            // whether the target letter has any rows at all.
+            var clauses: [String] = []
+            var args: [DatabaseValueConvertible] = []
+
+            var from = "FROM word w LEFT JOIN reviewCard rc ON rc.wordId = w.id"
+            if let book {
+                from += " INNER JOIN wordListEntry wle ON wle.wordId = w.id AND wle.listId = ?"
+                args.append(book)
+            }
+            switch state {
+            case .all: break
+            case .new: clauses.append("(rc.state IS NULL OR rc.state = 0)")
+            case .learning: clauses.append("rc.state IN (1, 3)")
+            case .review: clauses.append("rc.state = 2")
+            case .mature: clauses.append("rc.state = 2 AND rc.stability >= 21")
+            }
+            if let search, !search.isEmpty {
+                let pattern = "%\(search)%"
+                clauses.append("(w.spelling LIKE ? OR json_extract(w.data, '$.definitions[0].chinese') LIKE ?)")
+                args.append(pattern)
+                args.append(pattern)
+            }
+            // Count rows whose lowercased first character precedes our target.
+            let baseWhere = clauses.isEmpty ? "" : " AND " + clauses.joined(separator: " AND ")
+
+            // Target letter has any row at all?
+            let hasSql = "SELECT COUNT(*) \(from) WHERE LOWER(SUBSTR(w.spelling, 1, 1)) = ?\(baseWhere)"
+            let hasCount = try Int.fetchOne(db, sql: hasSql, arguments: StatementArguments(args + [letterStr])) ?? 0
+            if hasCount == 0 { return nil }
+
+            // Rows that sort before the target.
+            let beforeSql = "SELECT COUNT(*) \(from) WHERE LOWER(SUBSTR(w.spelling, 1, 1)) < ?\(baseWhere)"
+            let before = try Int.fetchOne(db, sql: beforeSql, arguments: StatementArguments(args + [letterStr])) ?? 0
+            return before
+        }
+    }
+
+    /// Returns the set of starting letters (lowercased) that have at least one
+    /// row under the current filters. Drives the dim/active state of the jump
+    /// bar so the user only sees letters they can actually jump to.
+    func availableStartingLetters(
+        book: String? = nil,
+        state: WordStateFilter = .all,
+        search: String? = nil
+    ) throws -> Set<String> {
+        try dbQueue.read { db in
+            var clauses: [String] = []
+            var args: [DatabaseValueConvertible] = []
+            var from = "FROM word w LEFT JOIN reviewCard rc ON rc.wordId = w.id"
+            if let book {
+                from += " INNER JOIN wordListEntry wle ON wle.wordId = w.id AND wle.listId = ?"
+                args.append(book)
+            }
+            switch state {
+            case .all: break
+            case .new: clauses.append("(rc.state IS NULL OR rc.state = 0)")
+            case .learning: clauses.append("rc.state IN (1, 3)")
+            case .review: clauses.append("rc.state = 2")
+            case .mature: clauses.append("rc.state = 2 AND rc.stability >= 21")
+            }
+            if let search, !search.isEmpty {
+                let pattern = "%\(search)%"
+                clauses.append("(w.spelling LIKE ? OR json_extract(w.data, '$.definitions[0].chinese') LIKE ?)")
+                args.append(pattern)
+                args.append(pattern)
+            }
+            let whereClause = clauses.isEmpty ? "" : " WHERE " + clauses.joined(separator: " AND ")
+            let sql = "SELECT DISTINCT LOWER(SUBSTR(w.spelling, 1, 1)) AS l \(from)\(whereClause)"
+            let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(args))
+            var letters = Set<String>()
+            for row in rows {
+                if let l: String = row["l"] { letters.insert(l) }
+            }
+            return letters
+        }
+    }
+
+    // MARK: - Integrity checks (DataDiagnosticsView)
+
+    /// Aggregate DB-internal consistency check. Used by DataDiagnosticsView
+    /// to spot drift between word / reviewCard / wordListEntry / user_content
+    /// without forcing the user to ad-hoc SQL their DB.
+    nonisolated struct IntegrityReport: Sendable {
+        /// reviewCard rows whose wordId points at a word that no longer exists.
+        var orphanReviewCards: Int
+        /// wordListEntry rows whose wordId is missing from word.
+        var orphanBookEntries: Int
+        /// user_content rows whose wordId is missing from word.
+        var orphanUserContent: Int
+        /// Words present in word that have no reviewCard at all (should be 0
+        /// — every word gets a fresh card on insert via createCardsForNewWords).
+        var wordsWithoutCard: Int
+        /// reviewCard rows where (state != 0) but no reviewLog exists. Not
+        /// strictly an error — could be legacy data — but worth surfacing.
+        var nonNewCardsWithoutLog: Int
+        /// Words missing core display fields after v3.0 (chinese def OR
+        /// mnemonic empty). Should be ~0 after upgrade.
+        var wordsMissingChineseDef: Int
+        var wordsMissingMnemonic: Int
+        /// Words that DON'T have the `ai_enriched` tag (so they predate AI
+        /// enrichment OR were API-cached without enrichment).
+        var wordsNotAIEnriched: Int
+        /// Word-book entry sanity: per-book count vs wordbooks.json's expected.
+        /// Not directly available from this query — caller computes by
+        /// comparing fetchWordBooks() against the manifest.
+    }
+
+    func checkIntegrity() throws -> IntegrityReport {
+        try dbQueue.read { db in
+            let orphanCards = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM reviewCard rc
+                LEFT JOIN word w ON w.id = rc.wordId
+                WHERE w.id IS NULL
+                """) ?? 0
+            let orphanEntries = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM wordListEntry wle
+                LEFT JOIN word w ON w.id = wle.wordId
+                WHERE w.id IS NULL
+                """) ?? 0
+            let orphanUC = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM user_content uc
+                LEFT JOIN word w ON w.id = uc.wordId
+                WHERE w.id IS NULL
+                """) ?? 0
+            let noCard = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM word w
+                LEFT JOIN reviewCard rc ON rc.wordId = w.id
+                WHERE rc.id IS NULL
+                """) ?? 0
+            let nonNewNoLog = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM reviewCard rc
+                WHERE rc.state != 0 AND NOT EXISTS (
+                    SELECT 1 FROM reviewLog rl WHERE rl.cardId = rc.id
+                )
+                """) ?? 0
+            let missingZh = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM word w
+                WHERE json_extract(w.data, '$.definitions[0].chinese') IS NULL
+                   OR json_extract(w.data, '$.definitions[0].chinese') = ''
+                """) ?? 0
+            let missingMnem = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM word w
+                WHERE json_array_length(json_extract(w.data, '$.mnemonics')) = 0
+                   OR json_extract(w.data, '$.mnemonics') IS NULL
+                """) ?? 0
+            // Words without 'ai_enriched' tag: scan tags array for the literal.
+            // SQLite json1 doesn't have an "array contains" so we use a LIKE
+            // on the serialized JSON — robust enough for an integer-free tag.
+            let notAI = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM word w
+                WHERE json_extract(w.data, '$.tags') IS NULL
+                   OR json_extract(w.data, '$.tags') NOT LIKE '%"ai_enriched"%'
+                """) ?? 0
+            return IntegrityReport(
+                orphanReviewCards: orphanCards,
+                orphanBookEntries: orphanEntries,
+                orphanUserContent: orphanUC,
+                wordsWithoutCard: noCard,
+                nonNewCardsWithoutLog: nonNewNoLog,
+                wordsMissingChineseDef: missingZh,
+                wordsMissingMnemonic: missingMnem,
+                wordsNotAIEnriched: notAI
+            )
+        }
+    }
+
     private static func buildSummaryQuery(
         book: String?,
-        tier: FrequencyTier?,
         state: WordStateFilter,
         search: String?,
         sort: WordSort,
-        limit: Int,
+        limit: Int?,
         offset: Int,
         countOnly: Bool
     ) -> (String, StatementArguments) {
         var args: [DatabaseValueConvertible] = []
         var clauses: [String] = []
 
+        // bookOrder needs wle.sortOrder. Always INNER JOIN wordListEntry when a
+        // book is set so we can ORDER BY it; without a book selected, bookOrder
+        // silently falls back to alphabetical (no wle column to sort on).
         let select: String
         if countOnly {
             select = "SELECT COUNT(*)"
         } else {
             // json_extract works on the BLOB column because GRDB stores UTF-8 JSON
             // bytes; SQLite's JSON1 parser accepts the byte sequence directly.
+            //
+            // hasUserMnemonic uses an EXISTS subquery on `user_content`. The
+            // subquery is run per-row but is index-driven (idx_user_content_word)
+            // and ~13K rows × ~zero matches is essentially free; if it ever shows
+            // up in the profile, switch to a LEFT JOIN with a GROUP BY.
             select = """
                 SELECT
                   w.id AS id,
@@ -374,7 +699,14 @@ nonisolated final class DatabaseService: Sendable {
                       AND json_array_length(json_extract(w.data, '$.mnemonics')) > 0
                     THEN 1 ELSE 0
                   END AS hasMnemonic,
-                  rc.state AS cardState
+                  EXISTS (
+                    SELECT 1 FROM user_content uc
+                    WHERE uc.wordId = w.id AND uc.type = 'mnemonic'
+                  ) AS hasUserMnemonic,
+                  rc.state AS cardState,
+                  rc.dueDate AS dueDate,
+                  rc.reps AS reps,
+                  rc.lapses AS lapses
                 """
         }
 
@@ -382,11 +714,6 @@ nonisolated final class DatabaseService: Sendable {
         if let book {
             from += " INNER JOIN wordListEntry wle ON wle.wordId = w.id AND wle.listId = ?"
             args.append(book)
-        }
-
-        if let tier {
-            clauses.append("w.frequency = ?")
-            args.append(tier.rawValue)
         }
 
         switch state {
@@ -420,25 +747,31 @@ nonisolated final class DatabaseService: Sendable {
             orderBy = ""
         } else {
             switch sort {
-            case .frequency:
-                orderBy = "ORDER BY w.frequency, w.spelling COLLATE NOCASE"
+            case .bookOrder:
+                if book != nil {
+                    orderBy = "ORDER BY wle.sortOrder, w.spelling COLLATE NOCASE"
+                } else {
+                    // No book picked → "Book Order" is meaningless; fall back to A→Z.
+                    orderBy = "ORDER BY w.spelling COLLATE NOCASE"
+                }
             case .alphabetical:
                 orderBy = "ORDER BY w.spelling COLLATE NOCASE"
-            case .dueDate:
-                // NULL dueDate (new cards / no card) sorts last; among non-null, soonest first
-                orderBy = "ORDER BY (rc.dueDate IS NULL), rc.dueDate ASC, w.spelling COLLATE NOCASE"
-            case .lapses:
-                orderBy = "ORDER BY (rc.lapses IS NULL), rc.lapses DESC, w.spelling COLLATE NOCASE"
             }
         }
 
+        // limit: Int? = nil → no LIMIT clause at all (full set). Library
+        // now reads the entire matching slice in one go and lets SwiftUI
+        // List recycle rows lazily; pagination + jump-bar were two
+        // overlapping "position" mental models. See erudite-31.
         let limitClause: String
         if countOnly {
             limitClause = ""
-        } else {
+        } else if let limit {
             limitClause = "LIMIT ? OFFSET ?"
             args.append(limit)
             args.append(offset)
+        } else {
+            limitClause = ""
         }
 
         let sql = [select, from, whereClause, orderBy, limitClause]
@@ -472,6 +805,7 @@ nonisolated final class DatabaseService: Sendable {
                       AND json_array_length(json_extract(w.data, '$.mnemonics')) > 0
                     THEN 1 ELSE 0
                   END AS hasMnemonic,
+                  EXISTS (SELECT 1 FROM user_content uc WHERE uc.wordId = w.id AND uc.type = 'mnemonic') AS hasUserMnemonic,
                   rc.state AS cardState,
                   rc.dueDate AS dueDate
                 \(from)
@@ -518,6 +852,7 @@ nonisolated final class DatabaseService: Sendable {
                       AND json_array_length(json_extract(w.data, '$.mnemonics')) > 0
                     THEN 1 ELSE 0
                   END AS hasMnemonic,
+                  EXISTS (SELECT 1 FROM user_content uc WHERE uc.wordId = w.id AND uc.type = 'mnemonic') AS hasUserMnemonic,
                   rc.state AS cardState
                 \(from)
                 WHERE rc.state = 0
@@ -641,6 +976,7 @@ nonisolated final class DatabaseService: Sendable {
                           AND json_array_length(json_extract(w.data, '$.mnemonics')) > 0
                         THEN 1 ELSE 0
                       END AS hasMnemonic,
+                      EXISTS (SELECT 1 FROM user_content uc WHERE uc.wordId = w.id AND uc.type = 'mnemonic') AS hasUserMnemonic,
                       rc.state AS cardState
                     \(from)
                     WHERE rc.state != 0 AND rc.dueDate >= ? AND rc.dueDate < ?
@@ -706,12 +1042,27 @@ nonisolated final class DatabaseService: Sendable {
     /// Shared row → WordSummary mapping helper.
     /// `dueDate` is optional in the SELECT — callers that don't need it can omit
     /// the column and we'll just leave it nil.
+    ///
+    /// IMPORTANT: GRDB returns SQLite integers as `Int64`. Using `row["x"] as? Int`
+    /// goes through `DatabaseValue` and silently fails (returns nil) for many
+    /// values. Use the typed annotation form `let x: Int? = row["x"]` instead —
+    /// GRDB's typed subscript handles the Int64 → Int conversion correctly.
+    /// This was the cause of the "all rows show as New" bug in Library when
+    /// filtering by Review state: SQL was returning state=2 but Swift was
+    /// reading nil → falling back to .new on the badge.
     private static func rowToSummary(_ row: Row) -> WordSummary {
-        let frequencyRaw = (row["frequency"] as? Int) ?? FrequencyTier.common.rawValue
-        let frequency = FrequencyTier(rawValue: frequencyRaw) ?? .common
-        let stateRaw = row["cardState"] as? Int
+        let frequencyRaw: Int? = row["frequency"]
+        let frequency = FrequencyTier(rawValue: frequencyRaw ?? FrequencyTier.common.rawValue) ?? .common
+        let stateRaw: Int? = row["cardState"]
         let cardState = stateRaw.flatMap { CardState(rawValue: $0) }
         let dueDate: Date? = row["dueDate"]
+        let hasMnemonicRaw: Int? = row["hasMnemonic"]
+        // hasUserMnemonic / reps / lapses are optional in the row because
+        // some old SELECT statements may not include them yet — default to
+        // safe values rather than crash if a column is absent.
+        let hasUserMnemonicRaw: Int? = row["hasUserMnemonic"]
+        let reps: Int? = row["reps"]
+        let lapses: Int? = row["lapses"]
         return WordSummary(
             id: row["id"],
             spelling: row["spelling"],
@@ -719,9 +1070,12 @@ nonisolated final class DatabaseService: Sendable {
             frequency: frequency,
             firstDefZh: row["firstDefZh"],
             posLabel: row["posLabel"],
-            hasMnemonic: (row["hasMnemonic"] as? Int) == 1,
+            hasMnemonic: (hasMnemonicRaw ?? 0) == 1,
+            hasUserMnemonic: (hasUserMnemonicRaw ?? 0) == 1,
             cardState: cardState,
-            dueDate: dueDate
+            dueDate: dueDate,
+            reps: reps,
+            lapses: lapses
         )
     }
 
@@ -1087,6 +1441,33 @@ nonisolated final class DatabaseService: Sendable {
         }
     }
 
+    // MARK: - Meta (key-value)
+    //
+    // Tiny key/value store. Currently used for `wordsVersion` (the version
+    // string of the bundled words.json that last seeded the DB). When the
+    // bundled version is newer than what's stored, WordLoader runs an upgrade
+    // pass that overwrites word.data — reviewCard / reviewLog / user_content
+    // are untouched, so FSRS progress and user mnemonics survive.
+
+    func metaValue(forKey key: String) throws -> String? {
+        try dbQueue.read { db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT value FROM meta WHERE key = ?",
+                arguments: [key]
+            )
+        }
+    }
+
+    func setMetaValue(_ value: String, forKey key: String) throws {
+        try dbQueue.write { db in
+            try db.execute(
+                sql: "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+                arguments: [key, value]
+            )
+        }
+    }
+
     // MARK: - User Content (mnemonics, notes, ...)
 
     /// User-authored content row stored in `user_content`.
@@ -1162,6 +1543,261 @@ nonisolated final class DatabaseService: Sendable {
     }
 
     // MARK: - Word-centric queries (for WordDetailView)
+
+    // MARK: - Today's Activity Stats
+    //
+    // "What did I do today?" — surfaced as an inline strip on Today.
+    //
+    // Returns four numbers from reviewLog + typingLog since the start
+    // of the local day:
+    //
+    // - flashcardSessions  : count of distinct Flashcard sessions
+    // - typingSessions     : count of distinct Typing sessions
+    // - wordsReviewed      : distinct wordIds rated today (Flashcard)
+    // - newWordsLearned    : distinct wordIds whose FIRST rating today
+    //                        was given to a card in `.new` state
+    //                        (reviewLog.state == 0)
+    //
+    // Sessions are inferred — we don't open/close a session row in the
+    // DB — by clustering events with timestamp gaps less than 30
+    // minutes. Two ratings 5 minutes apart = same session; 45 minutes
+    // apart = two sessions. Same gap rule for typingLog. The 30-min
+    // threshold is empirical: shorter than a typical "I'll practice for
+    // a bit" arc, longer than a quick mode-switch.
+
+    nonisolated struct TodayActivityStats: Sendable, Hashable {
+        let flashcardSessions: Int
+        let typingSessions: Int
+        let wordsReviewed: Int
+        let newWordsLearned: Int
+
+        var isEmpty: Bool {
+            flashcardSessions == 0 && typingSessions == 0
+                && wordsReviewed == 0 && newWordsLearned == 0
+        }
+    }
+
+    func fetchTodayActivityStats(now: Date = Date()) throws -> TodayActivityStats {
+        let cal = Calendar.current
+        let startOfToday = cal.startOfDay(for: now)
+        // 30-minute gap. Above this gap a new session boundary is drawn.
+        let sessionGap: TimeInterval = 30 * 60
+        return try dbQueue.read { db in
+            // ---- Flashcard side: sessions + words ----
+            let flashTimes = try Date.fetchAll(db, sql: """
+                SELECT timestamp FROM reviewLog
+                WHERE timestamp >= ?
+                ORDER BY timestamp ASC
+                """, arguments: [startOfToday])
+            let flashcardSessions = clusterCount(flashTimes, gap: sessionGap)
+
+            // wordsReviewed = distinct wordIds rated today (any rating).
+            // Join reviewLog→reviewCard to get wordId since reviewLog
+            // doesn't carry it directly.
+            let wordsReviewed = try Int.fetchOne(db, sql: """
+                SELECT COUNT(DISTINCT rc.wordId)
+                FROM reviewLog rl
+                JOIN reviewCard rc ON rc.id = rl.cardId
+                WHERE rl.timestamp >= ?
+                """, arguments: [startOfToday]) ?? 0
+
+            // newWordsLearned = distinct wordIds whose rating-today was
+            // given on a card that was `.new` at the time of rating
+            // (reviewLog.state == 0). The same word can have follow-up
+            // ratings later in the day (state would be `.learning` then),
+            // so we use the rows where state == 0 to mean "this is the
+            // bootstrap rating, the moment we count it as introduced".
+            let newWordsLearned = try Int.fetchOne(db, sql: """
+                SELECT COUNT(DISTINCT rc.wordId)
+                FROM reviewLog rl
+                JOIN reviewCard rc ON rc.id = rl.cardId
+                WHERE rl.timestamp >= ? AND rl.state = 0
+                """, arguments: [startOfToday]) ?? 0
+
+            // ---- Typing side: sessions only (we already count words
+            //      via wordsReviewed if there was a Flashcard rating;
+            //      pure-typing word counts go into wordsReviewed via
+            //      the recap query, not here — this strip is about
+            //      "study activity," not "all words touched"). ----
+            let typingTimes = try Date.fetchAll(db, sql: """
+                SELECT timestamp FROM typingLog
+                WHERE timestamp >= ?
+                ORDER BY timestamp ASC
+                """, arguments: [startOfToday])
+            let typingSessions = clusterCount(typingTimes, gap: sessionGap)
+
+            return TodayActivityStats(
+                flashcardSessions: flashcardSessions,
+                typingSessions: typingSessions,
+                wordsReviewed: wordsReviewed,
+                newWordsLearned: newWordsLearned
+            )
+        }
+    }
+
+    /// Count how many "sessions" a sorted timestamp array represents,
+    /// where two consecutive timestamps less than `gap` seconds apart
+    /// belong to the same session. Empty array → 0; a single
+    /// timestamp → 1.
+    private func clusterCount(_ times: [Date], gap: TimeInterval) -> Int {
+        guard !times.isEmpty else { return 0 }
+        var count = 1
+        for i in 1..<times.count {
+            if times[i].timeIntervalSince(times[i - 1]) >= gap {
+                count += 1
+            }
+        }
+        return count
+    }
+
+    // MARK: - Today's Recap
+    //
+    // "What words did I study today, and how did it go?"
+    //
+    // Used by Today's recap section. Unions reviewLog (Flashcard ratings)
+    // and typingLog (typed-word completions) since the start of the local
+    // day, aggregates per word: latest rating, total mistakes (typing),
+    // attempt count.
+    //
+    // Sort order: words with worst signal first (Again > Hard > many
+    // mistakes > Good). The user's eye should land on what they need to
+    // re-look-at.
+
+    nonisolated struct RecapEntry: Identifiable, Sendable, Hashable {
+        let wordId: String
+        let spelling: String
+        let firstDefZh: String?
+        /// Latest Flashcard rating today, or nil if only typed.
+        let latestRating: Rating?
+        /// Sum of typing mistakes today (0 if not typed).
+        let typingMistakes: Int
+        /// Total events today (Flashcard ratings + typing completions).
+        let attempts: Int
+
+        var id: String { wordId }
+
+        /// Lower = "more pressing", used for sort.
+        /// Again 0, lapses-with-rating 5, Hard 10, many mistakes 15, Good 20, Easy 25.
+        var pressingScore: Int {
+            // Again is the worst.
+            if latestRating == .again { return 0 }
+            // Lots of mistakes (Typing) without a rating: still bad.
+            if latestRating == nil && typingMistakes >= 3 { return 5 }
+            if latestRating == .hard { return 10 }
+            if latestRating == nil && typingMistakes > 0 { return 15 }
+            if latestRating == .good { return 20 }
+            if latestRating == .easy { return 25 }
+            return 30
+        }
+
+        /// True iff the user "didn't really get this one" — Today's
+        /// recap section pre-selects these for the [Re-review · N] CTA.
+        /// Anyone can be opted in/out manually before re-review starts.
+        var needsWork: Bool {
+            latestRating == .again
+                || latestRating == .hard
+                || typingMistakes > 0
+        }
+    }
+
+    func fetchTodayRecap(now: Date = Date()) throws -> [RecapEntry] {
+        let cal = Calendar.current
+        let startOfToday = cal.startOfDay(for: now)
+        return try dbQueue.read { db in
+            // 1) Pull today's Flashcard ratings: per word, the latest rating.
+            //    GROUP BY wordId, MAX(timestamp).
+            let ratingRows = try Row.fetchAll(db, sql: """
+                SELECT
+                  rc.wordId AS wordId,
+                  rl.rating AS latestRating,
+                  COUNT(*) AS ratingCount,
+                  MAX(rl.timestamp) AS lastTime
+                FROM reviewLog rl
+                JOIN reviewCard rc ON rc.id = rl.cardId
+                WHERE rl.timestamp >= ?
+                GROUP BY rc.wordId
+                """, arguments: [startOfToday])
+
+            // For each wordId, the latest rating: a second pass since SQLite
+            // doesn't have arg_max in JSON1.
+            var latestRatingByWord: [String: Int] = [:]
+            var ratingCountByWord: [String: Int] = [:]
+            for row in ratingRows {
+                let wid: String = row["wordId"]
+                let lr = try Int.fetchOne(db, sql: """
+                    SELECT rl.rating FROM reviewLog rl
+                    JOIN reviewCard rc ON rc.id = rl.cardId
+                    WHERE rc.wordId = ? AND rl.timestamp >= ?
+                    ORDER BY rl.timestamp DESC LIMIT 1
+                    """, arguments: [wid, startOfToday])
+                latestRatingByWord[wid] = lr
+                ratingCountByWord[wid] = (row["ratingCount"] as Int?) ?? 0
+            }
+
+            // 2) Pull today's typing logs.
+            let typingRows = try Row.fetchAll(db, sql: """
+                SELECT
+                  wordId,
+                  SUM(mistakes) AS totalMistakes,
+                  COUNT(*) AS attemptCount
+                FROM typingLog
+                WHERE timestamp >= ?
+                GROUP BY wordId
+                """, arguments: [startOfToday])
+
+            var typingMistakesByWord: [String: Int] = [:]
+            var typingCountByWord: [String: Int] = [:]
+            for row in typingRows {
+                let wid: String = row["wordId"]
+                typingMistakesByWord[wid] = row["totalMistakes"] ?? 0
+                typingCountByWord[wid] = row["attemptCount"] ?? 0
+            }
+
+            // 3) Union all touched wordIds, fetch their spelling + first
+            //    Chinese def in one shot. We use the projection SQL to
+            //    avoid decoding the full Word JSON.
+            let touched = Set(latestRatingByWord.keys).union(typingMistakesByWord.keys)
+            guard !touched.isEmpty else { return [] }
+
+            // SQLite IN expects a literal list — bind as N placeholders.
+            let placeholders = Array(repeating: "?", count: touched.count).joined(separator: ",")
+            let args = StatementArguments(Array(touched))
+            let wordRows = try Row.fetchAll(db, sql: """
+                SELECT
+                  w.id AS id,
+                  w.spelling AS spelling,
+                  json_extract(w.data, '$.definitions[0].chinese') AS firstDefZh
+                FROM word w
+                WHERE w.id IN (\(placeholders))
+                """, arguments: args)
+
+            var entries: [RecapEntry] = []
+            for row in wordRows {
+                let wid: String = row["id"]
+                let ratingRaw = latestRatingByWord[wid]
+                let rating = ratingRaw.flatMap { Rating(rawValue: $0) }
+                let typing = typingMistakesByWord[wid] ?? 0
+                let attempts = (ratingCountByWord[wid] ?? 0) + (typingCountByWord[wid] ?? 0)
+                entries.append(RecapEntry(
+                    wordId: wid,
+                    spelling: row["spelling"],
+                    firstDefZh: row["firstDefZh"],
+                    latestRating: rating,
+                    typingMistakes: typing,
+                    attempts: attempts
+                ))
+            }
+
+            // Sort by pressingScore (worst first), then alphabetical.
+            entries.sort { a, b in
+                if a.pressingScore != b.pressingScore {
+                    return a.pressingScore < b.pressingScore
+                }
+                return a.spelling.lowercased() < b.spelling.lowercased()
+            }
+            return entries
+        }
+    }
 
     /// The (single) review card for a word, or nil if none has been created.
     func fetchReviewCard(forWord wordId: String) throws -> ReviewCard? {

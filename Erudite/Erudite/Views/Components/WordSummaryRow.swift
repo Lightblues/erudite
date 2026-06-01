@@ -7,12 +7,22 @@ import SwiftUI
 //
 // Two density modes: .standard for full-width Library rows, .compact for
 // the narrower two-column Today preview where vertical space matters.
+//
+// The previous "tier badge" (C/M/A circle) was removed in 2026-05 — the
+// underlying frequency tier had no authoritative GRE provenance and the
+// distribution was so skewed (80% in advanced) that it added clutter
+// without information. WordSummary.frequency is still kept on the model
+// for backward compat / possible future re-introduction with a real signal.
 
 struct WordSummaryRow: View {
     let summary: WordSummary
     var density: Density = .standard
     var showStateBadge: Bool = true
-    var trailingText: String? = nil   // e.g. "today", "1d late", "#235"
+    var trailingText: String? = nil   // explicit override (e.g. "today", "1d late")
+    /// When provided and `trailingText` is nil, the row auto-picks a
+    /// trailing label appropriate to the sort: due date for `.dueDate`,
+    /// "L:N" for `.lapses`. Lets list views show *why* a row is where it is.
+    var trailingForSort: WordSort? = nil
 
     enum Density {
         case standard
@@ -21,8 +31,6 @@ struct WordSummaryRow: View {
 
     var body: some View {
         HStack(spacing: density == .compact ? 8 : 12) {
-            tierBadge
-
             VStack(alignment: .leading, spacing: density == .compact ? 1 : 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(summary.spelling)
@@ -56,17 +64,23 @@ struct WordSummaryRow: View {
 
             Spacer(minLength: 4)
 
-            if let trailingText {
-                Text(trailingText)
+            if let label = resolvedTrailing {
+                Text(label)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
 
-            if summary.hasMnemonic {
+            if summary.hasUserMnemonic {
+                // Purple lightbulb = user has authored their own mnemonic
+                // for this word. After v3.0, builtin mnemonics are universal
+                // (~100% coverage) so they no longer have signal value as a
+                // list indicator — flip the icon to mean "this is one I've
+                // annotated myself" instead.
                 Image(systemName: "lightbulb.fill")
                     .font(.caption2)
-                    .foregroundStyle(.yellow)
+                    .foregroundStyle(.purple)
+                    .help("You've added a personal mnemonic")
             }
 
             if showStateBadge {
@@ -76,21 +90,16 @@ struct WordSummaryRow: View {
         .padding(.vertical, density == .compact ? 2 : 4)
     }
 
-    // MARK: - Badges
-
-    private var tierBadge: some View {
-        let (color, label): (Color, String) = switch summary.frequency {
-        case .core: (.red, "C")
-        case .common: (.blue, "M")
-        case .advanced: (.gray, "A")
+    private var resolvedTrailing: String? {
+        if let trailingText { return trailingText }
+        guard let sort = trailingForSort else { return nil }
+        switch sort {
+        case .bookOrder, .alphabetical:
+            return nil
         }
-        let size: CGFloat = density == .compact ? 16 : 20
-        return Text(label)
-            .font(density == .compact ? .caption2.bold() : .caption2.bold())
-            .foregroundStyle(.white)
-            .frame(width: size, height: size)
-            .background(color, in: Circle())
     }
+
+    // MARK: - Badges
 
     @ViewBuilder
     private var stateBadge: some View {

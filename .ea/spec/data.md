@@ -158,10 +158,14 @@ enum Sentiment: String, Codable {
 }
 
 enum FrequencyTier: Int, Codable, Comparable {
-    case core = 1       // ~500, must master
-    case common = 2     // ~1000, should master
-    case advanced = 3   // 1500+, nice to have
+    case core = 1       // ~500
+    case common = 2     // ~1800
+    case advanced = 3   // ~10800
 }
+// NOTE: As of 2026-05 the Tier filter was removed from the Library UX —
+// the bundled frequency split has no authoritative GRE provenance and was
+// noisy as a priority signal (~83% in advanced). The model field is kept
+// for backward compat; UI surfaces only `Book` + `State` for now.
 ```
 
 ### ReviewCard (FSRS State)
@@ -382,13 +386,23 @@ amount of duplicated query code (one for summaries, one for full).
 
 | Purpose | Method |
 |---------|--------|
-| Library / generic list | `fetchWordSummaries(book, tier, state, search, sort, limit, offset)` + `fetchWordSummaryCount(...)` |
+| Library / generic list | `fetchWordSummaries(book, state, search, sort, limit, offset)` + `fetchWordSummaryCount(...)` |
 | Today: due preview | `fetchDueSummaries(now, inBook, limit)` |
 | Today / Plan: new queue | `fetchNewWordSummaries(inBook, limit)` |
 | Plan: workload chart | `fetchDueCountsByDay(daysAhead, inBook)` → `[(Date, Int)]` |
 | Plan: backlog groups | `fetchDueBacklog(inBook, perBucketLimit)` and `fetchDueBacklogCounts(...)` over `DueBucket` (overdue/today/tomorrow/thisWeek/later) |
 | WordDetail: card + history | `fetchReviewCard(forWord:)`, `fetchReviewLogs(cardId:limit:)`, `fetchBooks(containingWord:)` |
 | User content (mnemonics today, notes next) | `addUserContent`, `updateUserContent`, `deleteUserContent`, `fetchUserContent(wordId, type?)` |
+| Schema/data versioning | `metaValue(forKey:)`, `setMetaValue(_:forKey:)`, `upsertWordData(_:)` |
+| Library jump bar | `offsetForFirstSpelling(startingWith:book:state:search:)`, `availableStartingLetters(book:state:search:)` |
+| DB integrity audit | `checkIntegrity()` returning `IntegrityReport` (orphan rows, missing fields, untagged words) — driven by `Views/Debug/DataDiagnosticsView` |
+
+> Read-row gotcha: SQLite returns integers as `Int64`. `row["x"] as? Int`
+> goes through `DatabaseValue` and silently returns `nil` for live `Int64`
+> values — use the typed-annotation form `let x: Int? = row["x"]` instead
+> (lessons.md "row[\"key\"] as? Int is a trap"). Prior to 2026-05 the
+> `cardState` column was being read with the broken form, so the State
+> filter looked correct but every row's badge fell back to "New".
 
 ---
 
@@ -427,3 +441,49 @@ amount of duplicated query code (one for summaries, one for full).
   ]
 }
 ```
+
+
+---
+
+## Data Versioning and Upgrade
+
+`words.json` ships a `version` field. The DB tracks the last-applied
+version under `meta(key='wordsVersion')`. On every app launch,
+`WordLoader.seedDatabaseIfNeeded()` picks one of three paths:
+
+1. **Fresh install** (`word` table empty) → INSERT all words, create
+   FSRS `reviewCard` rows for each, seed `wordList` + `wordListEntry`,
+   stamp `wordsVersion`.
+2. **Upgrade** (DB version ≠ bundle version) → `upsertWordData([Word])`
+   runs an UPDATE for each existing word's `data` BLOB and an INSERT for
+   any new words. **It must NOT use `INSERT OR REPLACE`**: SQLite
+   implements REPLACE as DELETE-then-INSERT, and `reviewCard.wordId` has
+   `ON DELETE CASCADE` — a naive REPLACE would wipe every user's FSRS
+   progress. UPDATE on the same primary key avoids the DELETE entirely,
+   so `reviewCard` / `reviewLog` / `user_content` are untouched.
+3. **Up to date** → fast path, no work.
+
+This is what lets ai-enrichment of `words.json` (mnemonics, examples,
+synonyms, etc.) ship as a regular bundle update without resetting any
+user's review progress.
+
+### Diagnostics
+
+`Views/Debug/DataDiagnosticsView` (Debug Panel ⌘⇧D → Data tab) computes
+a read-only diff between `words.json` and the live DB:
+
+- Bundle vs DB version + word count delta
+- Word-set delta (bundle-only / DB-only — DB-only words come from
+  `WordLookupService` cache hits)
+- Per-field upgrade counts (how many words gain `mnemonic`, `chinese
+  def`, `examples`, etc. on the next upgrade)
+
+Useful for sanity-checking what an upcoming `words.json` bump will do
+before deciding to ship it.
+
+### Indexes
+
+- `idx_word_spelling` on `word(spelling COLLATE NOCASE)` — A→Z sort
+  becomes index-only.
+- `idx_wle_list_order` on `wordListEntry(listId, sortOrder)` — book-order
+  pagination is a 2-step index lookup, not a sort.

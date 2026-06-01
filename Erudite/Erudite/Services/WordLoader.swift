@@ -63,31 +63,71 @@ struct WordLoader {
         return try JSONDecoder().decode(WordBooksManifest.self, from: data)
     }
 
-    /// Seed the database with bundled words if empty
+    /// Seed or upgrade the database with bundled words.
+    ///
+    /// Three paths:
+    /// 1. **Fresh install** (no words yet) — insert everything, create
+    ///    reviewCards, seed wordbooks.
+    /// 2. **Upgrade** (DB version differs from bundled version) — UPDATE
+    ///    existing word.data with new fields (e.g. v1.0 → v3.0 ai-enriched
+    ///    mnemonics, examples, definitions). reviewCard / reviewLog /
+    ///    user_content are NOT touched, so all FSRS progress and user-authored
+    ///    mnemonics survive the upgrade. New words get fresh reviewCards.
+    /// 3. **Up to date** (versions match) — fast path: no work.
+    ///
+    /// The bundled version is read from `words.json:version`. The DB stores
+    /// the last-applied version under `meta(key='wordsVersion')`.
     static func seedDatabaseIfNeeded(database: DatabaseService) async throws {
+        let bundle = try loadBundledDatabase()
+        let bundledVersion = bundle.version
+        let storedVersion = (try? database.metaValue(forKey: "wordsVersion")) ?? ""
         let existingWords = try database.fetchAllWords()
 
         if existingWords.isEmpty {
-            // Fresh install: seed words + cards + books
-            let words = try loadBundledWords()
-            try database.insertWords(words)
-            try database.createCardsForNewWords(words)
+            // Fresh install
+            try database.insertWords(bundle.words)
+            try database.createCardsForNewWords(bundle.words)
             try seedWordBooks(database: database)
-        } else {
-            // Existing install: ensure word books are seeded
+            try database.setMetaValue(bundledVersion, forKey: "wordsVersion")
+            Log.app.info("Seeded \(bundle.words.count) words at version \(bundledVersion)")
+        } else if storedVersion != bundledVersion {
+            // Upgrade path: data version moved forward (or wasn't tracked yet).
+            // UPDATE existing rows with new word.data; INSERT any new ones
+            // and create reviewCards for them.
+            let result = try database.upsertWordData(bundle.words)
+            // Backfill cards only for the genuinely new words.
+            if result.newInserted > 0 {
+                let existingIds = Set(existingWords.map(\.id))
+                let newWords = bundle.words.filter { !existingIds.contains($0.id) }
+                try database.createCardsForNewWords(newWords)
+            }
+            // Books may also have changed shape — re-seed if missing.
             let books = try database.fetchWordBooks()
             if books.isEmpty {
-                // Upgrade path: insert any new words, then seed books
-                let allWords = try loadBundledWords()
-                let existingIds = Set(existingWords.map(\.id))
-                let newWords = allWords.filter { !existingIds.contains($0.id) }
-                if !newWords.isEmpty {
-                    try database.insertWords(newWords)
-                    try database.createCardsForNewWords(newWords)
-                }
+                try seedWordBooks(database: database)
+            }
+            try database.setMetaValue(bundledVersion, forKey: "wordsVersion")
+            Log.app.info(
+                "Upgraded words.json: \(storedVersion.isEmpty ? "<unknown>" : storedVersion) → \(bundledVersion); "
+                + "updated \(result.existingUpdated), inserted \(result.newInserted)"
+            )
+        } else {
+            // Up to date — only ensure books are seeded (defensive).
+            let books = try database.fetchWordBooks()
+            if books.isEmpty {
                 try seedWordBooks(database: database)
             }
         }
+    }
+
+    /// Load the full bundled database (so callers can use both `words` and `version`).
+    static func loadBundledDatabase() throws -> WordDatabase {
+        guard let url = Bundle.main.url(forResource: "words", withExtension: "json") else {
+            throw WordLoaderError.fileNotFound
+        }
+        let data = try Data(contentsOf: url)
+        let decoder = JSONDecoder()
+        return try decoder.decode(WordDatabase.self, from: data)
     }
 
     /// Seed word book metadata and entries

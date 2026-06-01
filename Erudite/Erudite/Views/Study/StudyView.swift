@@ -7,23 +7,109 @@ struct StudyView: View {
     @State private var viewModel = StudyViewModel()
     @State private var showWordList = false
 
+    /// Units shown when the user opens this tab without a pinned unit.
+    /// Loaded once on appear; we don't re-fetch on every re-render.
+    @State private var pickerUnits: [StudyUnit] = []
+    @State private var pickerLoaded: Bool = false
+
+    /// True iff we should show the unit picker instead of the flashcard
+    /// content. We sit on the picker until the user explicitly picks
+    /// a unit OR a unit is pinned via Today→UnitPreview.
+    @State private var showingPicker: Bool = false
+
     var body: some View {
         ZStack {
-            // UI layer
-            flashcardContent
-
-            // Keyboard capture layer (always grabs focus, handles all shortcuts)
-            KeyCaptureView(
-                onKeyDown: { event in handleKeyEvent(event) },
-                isActive: appState.selectedTab == .flashcard && !showWordList && appState.focusZone == .main
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if showingPicker {
+                pickerLanding
+            } else {
+                flashcardContent
+                // Keyboard capture is only active during a real session.
+                KeyCaptureView(
+                    onKeyDown: { event in handleKeyEvent(event) },
+                    isActive: appState.selectedTab == .flashcard && !showWordList && appState.focusZone == .main
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .task {
             if let db = appState.databaseService {
-                viewModel.start(database: db, mode: appState.studyMode, bookId: appState.activeBookId)
+                if let unit = appState.currentUnit {
+                    // Unit-driven entry from Today → UnitPreview → Flashcard.
+                    showingPicker = false
+                    viewModel.start(unit: unit, database: db)
+                    appState.currentUnit = nil
+                } else {
+                    // No pinned unit → show the picker instead of running
+                    // the legacy mixed-queue path.
+                    showingPicker = true
+                    await loadPickerUnits()
+                }
             }
         }
+        .onChange(of: appState.currentUnit?.id) { _, newId in
+            // If a new unit gets pinned while we're on this tab (e.g. user
+            // hopped to Today, picked a different unit, came back), consume it.
+            if let unit = appState.currentUnit, newId != nil, let db = appState.databaseService {
+                showingPicker = false
+                viewModel.start(unit: unit, database: db)
+                appState.currentUnit = nil
+            }
+        }
+    }
+
+    // MARK: - Picker Landing
+    //
+    // What the user sees when they click the Flashcard tab without first
+    // picking a unit on Today. Same UnitPickerView component as Today,
+    // so the experience is identical regardless of entry point.
+
+    @ViewBuilder
+    private var pickerLanding: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                Text("Pick a unit to study")
+                    .font(.title2.weight(.bold))
+                    .padding(.top, 24)
+
+                Text("These are the same units shown on Today. Pick one to start a Flashcard session.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+
+                if pickerLoaded {
+                    UnitPickerView(
+                        units: pickerUnits,
+                        onPick: { unit in
+                            // Start the unit directly in this tab — no
+                            // sheet preview here, since the user has
+                            // already committed to Flashcard.
+                            if let db = appState.databaseService {
+                                showingPicker = false
+                                viewModel.start(unit: unit, database: db)
+                            }
+                        },
+                        header: nil,
+                        emptyTitle: "All caught up!",
+                        emptyMessage: "No reviews due. Switch to Today to see your overall plan."
+                    )
+                    .frame(maxWidth: 560)
+                } else {
+                    ProgressView().padding(.top, 32)
+                }
+            }
+            .padding()
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func loadPickerUnits() async {
+        guard let db = appState.databaseService else { return }
+        let builder = StudyQueueBuilder(db: db)
+        self.pickerUnits = (try? builder.buildTodayUnits(
+            bookId: appState.activeBookId,
+            unitSize: appState.settings.unitSize
+        )) ?? []
+        self.pickerLoaded = true
     }
 
     private var flashcardContent: some View {
@@ -37,6 +123,8 @@ struct StudyView: View {
                 emptyState
             case .studying:
                 studyContent
+            case .unitComplete:
+                unitCompleteState
             case .complete:
                 completeState
             }
@@ -48,10 +136,26 @@ struct StudyView: View {
     // MARK: - Key Handling (via KeyCaptureView — always has focus)
 
     private func handleKeyEvent(_ event: KeyEvent) -> Bool {
-        // Escape: deactivate (pause) from studying
+        // Escape: deactivate (pause) from studying. From .unitComplete, Esc
+        // ends the session (the user's "I'm done" exit).
         if event.isEscape {
             if viewModel.phase == .studying {
                 viewModel.deactivate()
+            } else if viewModel.phase == .unitComplete {
+                viewModel.endSession()
+            }
+            return true
+        }
+
+        // Unit complete: Space/Return to continue, Q to stop.
+        if viewModel.phase == .unitComplete {
+            if event.isSpace || event.isReturn {
+                viewModel.continueAfterUnit()
+                return true
+            }
+            if event.char == "q" {
+                viewModel.endSession()
+                return true
             }
             return true
         }
@@ -376,10 +480,8 @@ struct StudyView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                // Tier badge + replay button
+                // Replay pronunciation button
                 HStack(spacing: 8) {
-                    tierBadge(word.frequency)
-                    Spacer().frame(width: 8)
                     Button {
                         viewModel.replayPronunciation()
                     } label: {
@@ -552,120 +654,45 @@ struct StudyView: View {
         }
     }
 
-    // MARK: - Complete State
+    // MARK: - Unit Complete State (between units)
+    //
+    // Mid-session checkpoint shown every `unitSize` ratings in legacy
+    // (non-unit-mode) sessions. Uses the shared SessionSummaryView so
+    // the layout matches the end-of-session summary; only the heading
+    // and actions differ.
+
+    private var unitCompleteState: some View {
+        SessionSummaryView(
+            result: viewModel.unitResult(),
+            heading: "Unit \(viewModel.unitsCompleted) complete · \(viewModel.cardsRemaining) left",
+            primaryAction: .init("Continue", systemImage: "arrow.right.circle.fill") {
+                viewModel.continueAfterUnit()
+            },
+            secondaryAction: .init("Stop", systemImage: "stop.circle", role: .cancel) {
+                viewModel.endSession()
+            }
+        )
+    }
+
+    // MARK: - Complete State (whole session done)
 
     private var completeState: some View {
-        ScrollView {
-            VStack(spacing: 24) {
-                Image(systemName: "party.popper.fill")
-                    .font(.system(size: 48))
-                    .foregroundStyle(.orange)
-
-                Text("Session Complete!")
-                    .font(.title)
-                    .fontWeight(.bold)
-
-                // Stats summary
-                HStack(spacing: 32) {
-                    VStack {
-                        Text("\(viewModel.cardsStudied)")
-                            .font(.title)
-                            .fontWeight(.bold)
-                            .foregroundStyle(.blue)
-                        Text("Cards")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    VStack {
-                        Text(formatDuration(viewModel.sessionDuration))
-                            .font(.title)
-                            .fontWeight(.bold)
-                            .foregroundStyle(.purple)
-                        Text("Duration")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    VStack {
-                        let againCount = viewModel.reviewResults.filter { $0.rating == .again }.count
-                        Text("\(againCount)")
-                            .font(.title)
-                            .fontWeight(.bold)
-                            .foregroundStyle(againCount > 0 ? .red : .green)
-                        Text("Again")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+        SessionSummaryView(
+            result: viewModel.sessionResult(),
+            heading: viewModel.inUnitMode ? "Unit complete" : "Session complete",
+            primaryAction: viewModel.inUnitMode
+                ? .init("Back to Today", systemImage: "house") {
+                    appState.selectedTab = .today
                 }
-                .padding()
-                .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
-
-                // Word results (sorted: Again first, then Hard, Good, Easy)
-                if !viewModel.reviewResults.isEmpty {
-                    GroupBox("Words Reviewed") {
-                        VStack(spacing: 4) {
-                            let sorted = viewModel.reviewResults.sorted { $0.rating.rawValue < $1.rating.rawValue }
-                            ForEach(Array(sorted.enumerated()), id: \.offset) { _, result in
-                                HStack {
-                                    Text(result.word.spelling)
-                                        .font(.body.monospaced())
-                                        .fontWeight(result.rating == .again ? .bold : .regular)
-                                        .foregroundStyle(ratingColor(result.rating))
-                                    Spacer()
-                                    if let def = result.word.definitions.first {
-                                        Text(def.chinese)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                    }
-                                    Spacer()
-                                    Text(result.rating.label)
-                                        .font(.caption2)
-                                        .padding(.horizontal, 5)
-                                        .padding(.vertical, 2)
-                                        .background(ratingColor(result.rating).opacity(0.15), in: Capsule())
-                                        .foregroundStyle(ratingColor(result.rating))
-                                }
-                                .padding(.vertical, 2)
-                            }
-                        }
-                        .padding(.top, 4)
-                    }
-                    .frame(maxWidth: 500)
-                }
-
-                Button("Study More") {
+                : .init("Study More", systemImage: "arrow.right.circle.fill") {
                     if let db = appState.databaseService {
                         viewModel.start(database: db)
                     }
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .padding(.top)
-            }
-            .padding(32)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        )
     }
 
     // MARK: - Helpers
-
-    private func tierBadge(_ tier: FrequencyTier) -> some View {
-        Text(tier.label)
-            .font(.caption2)
-            .fontWeight(.medium)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .background(tierColor(tier).opacity(0.15), in: Capsule())
-            .foregroundStyle(tierColor(tier))
-    }
-
-    private func tierColor(_ tier: FrequencyTier) -> Color {
-        switch tier {
-        case .core: .red
-        case .common: .blue
-        case .advanced: .gray
-        }
-    }
 
     private func cardStateColor(_ state: CardState) -> Color {
         switch state {

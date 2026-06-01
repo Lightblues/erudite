@@ -112,6 +112,16 @@ final class AppState {
     private(set) var memoryStore: MemoryStore?
     private(set) var backgroundAI: BackgroundAI?
 
+    /// Persistent UI state for the Library tab. Lives at the AppState
+    /// level so switching tabs doesn't reset the loaded page, selection,
+    /// filter pickers, or split-pane width. See LibraryState.
+    let libraryState = LibraryState()
+
+    /// Process-wide settings (unitSize, etc.). One source of truth shared
+    /// by Flashcard chunk size, Book Chapter size, and Today's review
+    /// slicer — see AppSettings.
+    let settings = AppSettings()
+
     func initialize() async {
         do {
             let db = try DatabaseService()
@@ -214,8 +224,37 @@ final class AppState {
 
     func startStudy(mode: StudyQueueMode = .mixed) {
         studyMode = mode
+        currentUnit = nil   // legacy entry — clears any pinned unit
         selectedTab = .flashcard
     }
+
+    // MARK: - Unit-driven study flow
+    //
+    // The user picks a StudyUnit on Today, optionally previews it, then
+    // launches into either Flashcard or Typing. The chosen unit is pinned
+    // to AppState.currentUnit so the receiving view consumes the same
+    // resolved cards (no re-querying SQL inside the view model). On
+    // session completion, currentUnit is cleared.
+
+    /// The unit the user has committed to studying. Nil = no active
+    /// unit-driven session (StudyView/TypingView fall back to their
+    /// legacy queue-loading behavior).
+    var currentUnit: StudyUnit?
+
+    /// Set the active unit and switch to the chosen study mode tab.
+    /// Used by UnitPreviewView's [Start with Flashcard] / [Start with Typing].
+    func startUnit(_ unit: StudyUnit, in mode: UnitStudyMode) {
+        currentUnit = unit
+        switch mode {
+        case .flashcard: selectedTab = .flashcard
+        case .typing:    selectedTab = .typing
+        }
+    }
+}
+
+enum UnitStudyMode {
+    case flashcard
+    case typing
 }
 
 enum SidebarTab: String, CaseIterable, Identifiable {
