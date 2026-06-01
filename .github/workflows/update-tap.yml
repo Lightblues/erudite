@@ -1,0 +1,66 @@
+name: Update Homebrew Tap
+
+# Manual fallback — use when the inline tap-update in build.yml fails,
+# or to re-bump after editing a release / changing the cask file.
+#
+# Usage:  gh workflow run update-tap.yml -f tag=erudite-v1.0.0
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to bump (e.g. erudite-v1.0.0)'
+        required: true
+
+jobs:
+  update-cask:
+    if: startsWith(github.event.inputs.tag, 'erudite-v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract version
+        id: version
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          echo "VERSION=${TAG#erudite-v}" >> $GITHUB_OUTPUT
+
+      - name: Compute DMG sha256
+        id: hash
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          DMG_URL="https://github.com/${{ github.repository }}/releases/download/erudite-v${VERSION}/Erudite-${VERSION}.dmg"
+          curl -fsSL -o erudite.dmg "$DMG_URL"
+          echo "SHA=$(sha256sum erudite.dmg | awk '{print $1}')" >> $GITHUB_OUTPUT
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: lightblues/homebrew-tap
+          token: ${{ secrets.TAP_PUSH_TOKEN }}
+          path: tap
+
+      - name: Update cask file
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+          SHA: ${{ steps.hash.outputs.SHA }}
+        run: |
+          CASK=tap/Casks/erudite.rb
+          [[ -f "$CASK" ]] || { echo "❌ $CASK not found"; exit 1; }
+          python3 - <<PY
+          import re, pathlib, os
+          p = pathlib.Path("$CASK")
+          s = p.read_text()
+          s = re.sub(r'version "[^"]+"', f'version "{os.environ["VERSION"]}"', s, count=1)
+          s = re.sub(r'sha256 "[0-9a-f]{64}"', f'sha256 "{os.environ["SHA"]}"', s, count=1)
+          p.write_text(s)
+          PY
+          cat "$CASK"
+
+      - name: Commit and push
+        working-directory: tap
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/erudite.rb
+          git diff --cached --quiet && { echo "No changes"; exit 0; }
+          git commit -m "erudite: bump to ${{ steps.version.outputs.VERSION }}"
+          git push

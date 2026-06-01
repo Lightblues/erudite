@@ -1,0 +1,141 @@
+name: Build Erudite
+
+# Two triggers:
+#   - workflow_dispatch: build a DMG without creating a release. Use to
+#     verify the pipeline mid-development.
+#   - push tag erudite-v*: full release flow — DMG, GitHub Release, and
+#     inline Homebrew Cask bump.
+#
+# Version source: tag → strip "erudite-v" prefix; or for workflow_dispatch,
+# read MARKETING_VERSION from project.pbxproj (or honor the optional input).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version override (e.g. 1.1.0). Leave blank to use MARKETING_VERSION from pbxproj.'
+        required: false
+        default: ''
+  push:
+    tags:
+      - 'erudite-v*'
+
+jobs:
+  build:
+    runs-on: macos-14   # Apple Silicon — fastest universal archive
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        # macos-14 ships Xcode 15+. We pick the default — Erudite's
+        # deployment target is 14.0 (Sonoma) so any modern Xcode works.
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/erudite-v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/erudite-v}"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION=$(awk -F'= ' '/MARKETING_VERSION =/ {gsub(";","",$2); print $2; exit}' \
+              Erudite/Erudite.xcodeproj/project.pbxproj | tr -d '[:space:]')
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "▶ Building Erudite v$VERSION"
+
+      - name: Build DMG
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: ./scripts/build-dmg.sh
+
+      - name: Show dist contents
+        run: ls -lh dist/
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Erudite-dmg
+          path: dist/Erudite-*.dmg
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/erudite-v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/erudite-v}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Erudite v${{ steps.version.outputs.VERSION }}
+          draft: false
+          prerelease: false
+          files: artifacts/**/*.dmg
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # --- Homebrew tap bump (inline) ---
+      #
+      # Pattern from Nexus: do the cask update in the same job that creates
+      # the release, using a PAT (TAP_PUSH_TOKEN) to push to the separate
+      # homebrew-tap repo. Doing it inline avoids the GITHUB_TOKEN
+      # cross-repo limitation.
+      #
+      # On failure, run .github/workflows/update-tap.yml manually.
+
+      - name: Compute DMG sha256
+        id: hash
+        run: |
+          DMG=$(find artifacts -name "Erudite-*.dmg" | head -1)
+          [[ -f "$DMG" ]] || { echo "No DMG found"; exit 1; }
+          echo "SHA=$(sha256sum "$DMG" | awk '{print $1}')" >> $GITHUB_OUTPUT
+          echo "DMG=$DMG" >> $GITHUB_OUTPUT
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: lightblues/homebrew-tap
+          token: ${{ secrets.TAP_PUSH_TOKEN }}
+          path: tap
+
+      - name: Update cask file
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+          SHA: ${{ steps.hash.outputs.SHA }}
+        run: |
+          CASK=tap/Casks/erudite.rb
+          [[ -f "$CASK" ]] || { echo "❌ $CASK not found in homebrew-tap"; exit 1; }
+          python3 - <<PY
+          import re, pathlib, os
+          p = pathlib.Path("$CASK")
+          s = p.read_text()
+          s = re.sub(r'version "[^"]+"', f'version "{os.environ["VERSION"]}"', s, count=1)
+          # Single sha256 (universal DMG). Cask uses `sha256 "..."` after version.
+          s = re.sub(r'sha256 "[0-9a-f]{64}"', f'sha256 "{os.environ["SHA"]}"', s, count=1)
+          p.write_text(s)
+          PY
+          cat "$CASK"
+
+      - name: Push cask update
+        working-directory: tap
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/erudite.rb
+          git diff --cached --quiet && { echo "No changes"; exit 0; }
+          git commit -m "erudite: bump to ${{ steps.version.outputs.VERSION }}"
+          git push
