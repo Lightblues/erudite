@@ -67,13 +67,14 @@
   - 右侧 chat sidebar 焦点模型: 通过 `cmd+.` toggle chat 页面; 通过 `esc` 回到主视觉区域
 - features
   - FSRS: 核心记忆逻辑, @Erudite/Erudite/Engine/FSRS/FSRSEngine.swift
-    - ⚠️  当前是 stub，还没实现完整 FSRS-5
+    - ⚠️ 当前是 stub，还没实现完整 FSRS-5
   - keybaord shortcuts
   - 自动语音播放
   - 多词书 (workbook)
     - 词义数据: 
     - 词书 (list) 数据源: #qwerty-learner
   - view: stats (dashboard)
+  - [x] github CI, brew cask
 - flashcard | FSRS -- 核心 UI 组件可和 typing 共享
   - feat: 核心的翻看单词-标记 again/hard/good/easy 模式
   - feat: 快捷键/键盘操作
