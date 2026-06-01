@@ -1,5 +1,6 @@
 ---
 description: Cut a release (bumps version, tags + pushes; CI handles the rest)
+allowed-tools: Bash
 argument-hint: patch|minor|major [--watch]
 ---
 
