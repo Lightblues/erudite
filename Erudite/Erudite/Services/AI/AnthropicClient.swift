@@ -174,7 +174,7 @@ enum AIClientError: LocalizedError {
         case .invalidResponse:
             return "Invalid response from API"
         case .invalidAPIKey:
-            return "Invalid API key. Please check your key in Config.json."
+            return "Invalid API key. Open Settings (⌘,) to update your key."
         case .httpError(let status, let message):
             return "HTTP \(status): \(message)"
         case .rateLimited(let message):

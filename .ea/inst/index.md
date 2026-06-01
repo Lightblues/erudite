@@ -26,7 +26,7 @@
   - 只记忆单词的效果有限, 肯定要结合时文/试题阅读 -- 包括 typing (也可以做拼写速度比赛?)
   - AI pet: 陪伴学习
 
-[notes]
+## basic
 - macos 开发工具链
   - [Xcode](https://developer.apple.com/xcode)
   - [sf-symbols](https://developer.apple.com/sf-symbols/): 图标开发
@@ -48,6 +48,8 @@
     - [Qwerty Learner](https://github.com/RealKai42/qwerty-learner) 22k [web](https://qwerty.kaiyi.cool/); 支持 vscode 插件, 也有在线版
       - 词库包括: GMAT, GRE, IELTS, SAT, TOEFL, CET-4, CET-6. e.g. [gre3000](https://github.com/RealKai42/qwerty-learner/blob/master/public/dicts/GRE3000_3_T.json) 但内容比较简单; 发音方案如何做的?
       - 同义词: [gre-equivalent](https://github.com/RealKai42/qwerty-learner/blob/master/public/dicts/GRE_equivalent.json) 
+
+## UI
 - 整体 UI 设计
   - 主体交互 (sidebar)
     - Today: 首页
@@ -67,13 +69,16 @@
   - 右侧 chat sidebar 焦点模型: 通过 `cmd+.` toggle chat 页面; 通过 `esc` 回到主视觉区域
 - features
   - FSRS: 核心记忆逻辑, @Erudite/Erudite/Engine/FSRS/FSRSEngine.swift
-    - ⚠️  当前是 stub，还没实现完整 FSRS-5
+    - ⚠️ 当前是 stub，还没实现完整 FSRS-5
   - keybaord shortcuts
   - 自动语音播放
   - 多词书 (workbook)
     - 词义数据: 
     - 词书 (list) 数据源: #qwerty-learner
   - view: stats (dashboard)
+  - [x] github CI, brew cask
+
+## flashcard & typing
 - flashcard | FSRS -- 核心 UI 组件可和 typing 共享
   - feat: 核心的翻看单词-标记 again/hard/good/easy 模式
   - feat: 快捷键/键盘操作
@@ -86,6 +91,8 @@
   - feat: 章节小结
   - feat: 键入错误回退/输入无效
   - feat: 激活/退出 typing 状态
+
+## dictionary & library
 - dictionary
   - feat: 所有单词均可点击查看词义, 可嵌套
   - feat: 加入 "生词本"

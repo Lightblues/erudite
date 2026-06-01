@@ -341,3 +341,18 @@ I can open the right pane for you:
 open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"        # Full Disk Access
 open "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders" # Files and Folders
 ```
+
+
+## icon
+<!-- ChatGPT -->
+我想要给 macos app 做一个 icon:
+- 名称: Erudite
+- 功能: macos 桌面端背单词 (起因是 GRE, 但不局限可以选任意词表进行背诵)
+- 设计思路: 现代风格, 简洁, 主色调蓝色
+- 大小: 1024x1024 PNG
+去掉边上白色边框 (边上用透明比较好), 大小应该是 1024
+
+我创建了一个 icon /Users/frankshi/Downloads/icon.png ; 将其设置为 erudite 的图标
+我移动到了 .tmp/icon.png 中, 你可以将其移动到 git 管理的目录下, 然后自动操作
+.tmp/icon.png 到非 gitignore 的目录, 从而加入 commit
+

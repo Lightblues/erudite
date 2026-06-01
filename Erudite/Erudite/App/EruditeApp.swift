@@ -30,5 +30,10 @@ struct EruditeApp: App {
         }
         .keyboardShortcut("d", modifiers: [.command, .shift])
         .defaultSize(width: 800, height: 500)
+
+        // Settings (⌘,) — API keys + AI endpoint config.
+        Settings {
+            SettingsView()
+        }
     }
 }

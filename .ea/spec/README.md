@@ -26,7 +26,7 @@ AI-native macOS vocabulary app for GRE/TOEFL/SAT preparation. Built with Swift +
 | Interactive Dictionary | ✅ Done | Click words → popover (local) or API (MW/FreeDict) with cache |
 | Focus & keyboard model | ✅ Done | Issue #23: `focusZone` source-of-truth + window click routing; KeyCaptureView (NSView) for study, TextEditor for chat (see interaction-model.md) |
 | Data Pipeline (ECDICT + AI) | ✅ Done | 13K words enriched: phonetics, freq, tags, mnemonics, examples |
-| Config Management | ✅ Done | Config.json (git-ignored) + AppConfig.swift |
+| Config Management | ✅ Done | Issue #32: Settings window (⌘,) + Keychain for keys + OpenRouter default |
 | Dashboard / Stats | ✅ Done | Swift Charts, live stats |
 | AI Companion P0 (Agent + Chat) | ✅ Done | Issue #19: SSE client, agent loop, 4 tools, side panel |
 | AI Companion P1 (Memory) | ✅ Done | Issue #20: sessions, observations, memory tools, model tiering |

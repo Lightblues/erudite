@@ -20,9 +20,10 @@ Erudite/
 ├── Erudite.xcodeproj
 ├── Erudite/
 │   ├── App/
-│   │   ├── EruditeApp.swift            # @main entry + debug window
+│   │   ├── EruditeApp.swift            # @main entry + debug + Settings windows
 │   │   ├── AppState.swift              # Global state + service wiring
-│   │   ├── AppConfig.swift             # Config.json loader (API keys, model config)
+│   │   ├── AppConfig.swift             # @Observable: Keychain + UserDefaults
+│   │   ├── KeychainStore.swift         # SecItem wrapper for API keys (local-only)
 │   │   └── Log.swift                   # Unified logging (os.Logger + file + debug buffer)
 │   ├── Models/
 │   │   ├── Word.swift                  # Word data model
@@ -103,6 +104,8 @@ Erudite/
 │   │   │   ├── StreamingTextView.swift  # Live streaming text
 │   │   │   ├── ThinkingIndicator.swift  # Tool execution animation
 │   │   │   └── SessionListView.swift   # Session list popover
+│   │   ├── Settings/
+│   │   │   └── SettingsView.swift      # ⌘, window: AI + Dictionary tabs
 │   │   └── Debug/
 │   │       └── DebugPanelView.swift    # ⌘⇧D debug window (logs + traces + stats)
 │   └── Resources/
@@ -237,11 +240,15 @@ Difficulty update:
 │   - DebugPanelView (⌘⇧D)                                   │
 └─────────────────────────────────────────────────────────────┘
 
-Config (Config.json):
-  aiApiKey      — API key (Anthropic or proxy)
-  aiBaseURL     — Custom endpoint (empty = api.anthropic.com)
-  aiModel       — Main model for chat (empty = claude-sonnet-4)
-  aiFastModel   — Background tasks (empty = falls back to aiModel)
+Config (managed via Settings ⌘,):
+  Secrets — Keychain (local-only, encrypted, survives reinstall):
+    aiApiKey         — required, no default shipped
+    mwDictionaryKey  — optional (MW Collegiate)
+    mwThesaurusKey   — optional (MW Thesaurus)
+  Preferences — UserDefaults:
+    aiBaseURL    — empty = openrouter.ai/api/v1/messages
+    aiModel      — empty = openrouter/auto
+    aiFastModel  — empty = falls back to aiModel
 ```
 
 ### Cost Control Strategy

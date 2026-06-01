@@ -85,7 +85,7 @@ WordLookupService.lookupAsync(word)
 - Results cached permanently to local SQLite DB
 - Source tracked via tags: `source:mw`, `source:free_dict`
 - Lower-quality cache auto-upgrades when better source available
-- MW keys in Config.json (git-ignored); 1000 calls/day free tier
+- MW keys configured via Settings (⌘,), stored in Keychain; 1000 calls/day free tier
 
 ---
 

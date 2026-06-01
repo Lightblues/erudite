@@ -7,6 +7,9 @@ struct AIChatPanel: View {
     @Environment(AppState.self) private var appState
     @State private var viewModel: ChatViewModel
     @State private var showSessionList = false
+    // Re-evaluated whenever AppConfig.shared (an @Observable singleton) changes,
+    // so adding a key in Settings instantly unlocks this panel.
+    private var config = AppConfig.shared
 
     init(runtime: AgentRuntime) {
         self._viewModel = State(initialValue: ChatViewModel(runtime: runtime))
@@ -20,7 +23,9 @@ struct AIChatPanel: View {
             Divider()
 
             // Content
-            if viewModel.isEmpty && !viewModel.isProcessing {
+            if !config.hasAIKey {
+                missingKeyState
+            } else if viewModel.isEmpty && !viewModel.isProcessing {
                 emptyState
             } else {
                 messageList
@@ -33,13 +38,15 @@ struct AIChatPanel: View {
 
             Divider()
 
-            // Input (always editable — even during streaming)
+            // Input — disabled when no key (sending wouldn't work anyway).
             ChatInputView(
                 text: $viewModel.inputText,
                 isProcessing: viewModel.isProcessing,
                 onSend: viewModel.send,
                 onCancel: viewModel.cancel
             )
+            .disabled(!config.hasAIKey)
+            .opacity(config.hasAIKey ? 1 : 0.5)
         }
         .background(.background)
         // Report panel frame so the global mouse monitor can route clicks here.
@@ -131,6 +138,37 @@ struct AIChatPanel: View {
         guard let sessionManager = appState.sessionManager else { return }
         try? sessionManager.deleteSession(id: id)
         sessionManager.refreshSessionList()
+    }
+
+    // MARK: - Missing key state
+    //
+    // Shown in place of messages when no Anthropic API key is configured.
+    // The SettingsLink button opens the standard macOS Settings window,
+    // landing on whichever tab the user last used (AI by default on first run).
+    private var missingKeyState: some View {
+        VStack(spacing: 12) {
+            Spacer()
+            Image(systemName: "key.slash")
+                .font(.system(size: 32))
+                .foregroundStyle(.secondary)
+            Text("AI Companion is disabled")
+                .font(.subheadline.weight(.medium))
+            Text("Add your Anthropic API key to enable chat, observation extraction, and session titles.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 16)
+            SettingsLink {
+                Label("Open Settings", systemImage: "gearshape")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .padding(.top, 4)
+            Spacer()
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Empty State
