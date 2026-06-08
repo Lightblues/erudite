@@ -1,0 +1,10 @@
+name: erudite
+category: app
+origin: original
+scope: personal
+status: active
+priority: p3
+thread:
+depends_on: []
+stack: [swift, swiftui, grdb]
+description: AI-native macOS app for GRE vocabulary learning with FSRS-powered spaced repetition
